@@ -24,6 +24,7 @@ SOURCES += \
     $$PWD/floatItemData/vpiecelabeldata.cpp \
     $$PWD/floatItemData/vpatternlabeldata.cpp \
     $$PWD/floatItemData/vgrainlinedata.cpp \
+    $$PWD/floatItemData/vpiecegriddata.cpp \
     $$PWD/floatItemData/vabstractfloatitemdata.cpp \
     $$PWD/measurements_def.cpp \
     $$PWD/pmsystems.cpp
@@ -67,9 +68,11 @@ HEADERS += \
     $$PWD/floatItemData/vpiecelabeldata.h \
     $$PWD/floatItemData/vpatternlabeldata.h \
     $$PWD/floatItemData/vgrainlinedata.h \
+    $$PWD/floatItemData/vpiecegriddata.h \
     $$PWD/floatItemData/vabstractfloatitemdata.h \
     $$PWD/floatItemData/vabstractfloatitemdata_p.h \
     $$PWD/floatItemData/vgrainlinedata_p.h \
+    $$PWD/floatItemData/vpiecegriddata_p.h \
     $$PWD/floatItemData/floatitemdef.h \
     $$PWD/floatItemData/vpatternlabeldata_p.h \
     $$PWD/floatItemData/vpiecelabeldata_p.h \

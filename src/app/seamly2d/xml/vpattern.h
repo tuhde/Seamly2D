@@ -154,6 +154,7 @@ private:
     void           ParsePieceDataTag(const QDomElement &domElement, VPiece &piece) const;
     void           ParsePiecePatternInfo(const QDomElement &domElement, VPiece &piece) const;
     void           ParsePieceGrainline(const QDomElement &domElement, VPiece &piece) const;
+    void           ParsePieceGrid(const QDomElement &domElement, VPiece &piece) const;
     void           parsePatternPieces(const QDomElement &domElement, const Document &parse);
 
     void           ParsePointElement(VMainGraphicsScene *scene, QDomElement &domElement,

@@ -80,6 +80,7 @@
 #include "../vpatterndb/floatItemData/vpiecelabeldata.h"
 #include "../vpatterndb/floatItemData/vpatternlabeldata.h"
 #include "../vpatterndb/floatItemData/vgrainlinedata.h"
+#include "../vpatterndb/floatItemData/vpiecegriddata.h"
 #include "../vpatterndb/vpiecepath.h"
 #include "../vpatterndb/vnodedetail.h"
 
@@ -893,7 +894,8 @@ void VPattern::parsePieceElement(QDomElement &domElement, const Document &parse)
                                                << TagGrainline
                                                << PatternPieceTool::TagCSA
                                                << PatternPieceTool::TagIPaths
-                                               << PatternPieceTool::TagAnchors;
+                                               << PatternPieceTool::TagAnchors
+                                               << PatternPieceTool::TagGrid;
 
         const QDomNodeList nodeList = domElement.childNodes();
         for (qint32 i = 0; i < nodeList.size(); ++i)
@@ -935,6 +937,9 @@ void VPattern::parsePieceElement(QDomElement &domElement, const Document &parse)
                         break;
                     case 6:// PatternPieceTool::TagAnchors
                         piece.setAnchors(ParsePieceAnchors(element));
+                        break;
+                    case 7:// PatternPieceTool::TagGrid
+                        ParsePieceGrid(element, piece);
                         break;
                     default:
                         break;
@@ -1080,6 +1085,19 @@ void VPattern::ParsePieceGrainline(const QDomElement &domElement, VPiece &piece)
     gGeometry.setCenterAnchorPoint(GetParametrUInt(domElement, PatternPieceTool::AttrCenterAnchor, NULL_ID_STR));
     gGeometry.setTopAnchorPoint(GetParametrUInt(domElement, PatternPieceTool::AttrTopAnchorPoint, NULL_ID_STR));
     gGeometry.setBottomAnchorPoint(GetParametrUInt(domElement, PatternPieceTool::AttrBottomAnchorPoint, NULL_ID_STR));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void VPattern::ParsePieceGrid(const QDomElement &domElement, VPiece &piece) const
+{
+    VPieceGridData &grid = piece.GetGridGeometry();
+    grid.SetVisible(getParameterBool(domElement, AttrVisible, falseStr));
+    grid.setSpacingX(GetParametrString(domElement, PatternPieceTool::AttrSpacingX, "1"));
+    grid.setSpacingY(GetParametrString(domElement, PatternPieceTool::AttrSpacingY, "1"));
+    grid.setRotation(GetParametrString(domElement, AttrRotation, "0"));
+    grid.setLineColor(GetParametrString(domElement, AttrLineColor, ColorBlack));
+    grid.setLineType(lineTypeToPenStyle(GetParametrString(domElement, AttrLineType, LineTypeDashLine)));
+    grid.setLineWeight(GetParametrString(domElement, AttrLineWeight, DefaultLineWeight));
 }
 
 //---------------------------------------------------------------------------------------------------------------------

@@ -60,6 +60,7 @@
 #include "../vpatterndb/vpiece.h"
 #include "../vwidgets/vtextgraphicsitem.h"
 #include "../vwidgets/vgrainlineitem.h"
+#include "../vwidgets/vgriditem.h"
 
 class DialogTool;
 class NonScalingFillPathItem;
@@ -81,6 +82,7 @@ public:
     static const QString TagRecord;
     static const QString TagIPaths;
     static const QString TagAnchors;
+    static const QString TagGrid;
     static const QString AttrVersion;
     static const QString AttrForbidFlipping;
     static const QString AttrPieceColor;
@@ -97,6 +99,8 @@ public:
     static const QString AttrCenterAnchor;
     static const QString AttrTopAnchorPoint;
     static const QString AttrBottomAnchorPoint;
+    static const QString AttrSpacingX;
+    static const QString AttrSpacingY;
 
     void        Remove(bool ask);
 
@@ -111,6 +115,7 @@ public:
     static void addPieceLabel(VAbstractPattern *doc, QDomElement &domElement, const VPiece &piece);
     static void addPatternLabel(VAbstractPattern *doc, QDomElement &domElement, const VPiece &piece);
     static void addGrainline(VAbstractPattern *doc, QDomElement &domElement, const VPiece &piece);
+    static void addGrid(VAbstractPattern *doc, QDomElement &domElement, const VPiece &piece);
 
     void                 updatePiece(const VPiece &piece);
     void                 RefreshGeometry();
@@ -140,6 +145,7 @@ public slots:
     void                 updatePieceLabel();
     void                 updatePatternLabel();
     void                 updateGrainline();
+    void                 updateGrid();
     void                 editPieceProperties();
 
 protected slots:
@@ -188,6 +194,7 @@ private:
     VTextGraphicsItem      *m_dataLabel;
     VTextGraphicsItem      *m_patternInfo;
     VGrainlineItem         *m_grainLine;
+    VGridItem              *m_grid;
     QGraphicsPathItem      *m_notches;
 
                            PatternPieceTool(VAbstractPattern *doc, VContainer *data, const quint32 &id,
@@ -223,6 +230,7 @@ private:
     void                  toggleSeamLine(bool checked);
     void                  toggleSeamAllowance(bool checked);
     void                  toggleGrainline(bool checked);
+    void                  toggleGrid(bool checked);
     void                  togglePatternLabel(bool checked);
     void                  togglePieceLabel(bool checked);
     void                  renamePiece(VPiece piece);

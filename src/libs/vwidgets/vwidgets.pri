@@ -28,6 +28,7 @@ SOURCES += \
     $$PWD/vabstractmainwindow.cpp \
     $$PWD/vtextgraphicsitem.cpp \
     $$PWD/vgrainlineitem.cpp \
+    $$PWD/vgriditem.cpp \
     $$PWD/vpieceitem.cpp \
     $$PWD/vcurvepathitem.cpp \
     $$PWD/global.cpp \
@@ -65,6 +66,7 @@ HEADERS += \
     $$PWD/vabstractmainwindow.h \
     $$PWD/vtextgraphicsitem.h \
     $$PWD/vgrainlineitem.h \
+    $$PWD/vgriditem.h \
     $$PWD/vpieceitem.h \
     $$PWD/vcurvepathitem.h \
     $$PWD/global.h \

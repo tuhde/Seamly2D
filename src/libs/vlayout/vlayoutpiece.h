@@ -66,6 +66,7 @@
 #include "../ifc/xml/vabstractpattern.h"
 #include "../vpatterndb/floatItemData/vpatternlabeldata.h"
 #include "../vpatterndb/floatItemData/vpiecelabeldata.h"
+#include "../vpatterndb/floatItemData/vpiecegriddata.h"
 #include "../vpatterndb/vcontainer.h"
 #include "vabstractpiece.h"
 
@@ -127,6 +128,8 @@ public:
     void                      setGrainline(const VGrainlineData& geom, const VContainer *pattern);
     QVector<QPointF>          getGrainline() const;
 
+    void                      setGrid(const VPieceGridData& geom, const VContainer *pattern);
+
     QTransform                getTransform() const;
     void                      setTransform(const QTransform &transform);
 
@@ -179,6 +182,7 @@ private:
     void                                 createLabelItem(QGraphicsItem *parent, const QVector<QPointF> &labelShape,
                                                          const VTextManager &tm, bool textAsPaths) const;
     void                                 createGrainlineItem(QGraphicsItem *parent, bool textAsPaths) const;
+    void                                 createGridItem(QGraphicsItem *parent) const;
 
     template <class T>
     QVector<T>                           Map(const QVector<T> &points) const;

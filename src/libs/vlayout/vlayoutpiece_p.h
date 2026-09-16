@@ -85,7 +85,14 @@ public:
           patternInfo(),
           grainlinePoints(),
           m_tmPiece(),
-          m_tmPattern()
+          m_tmPattern(),
+          m_gridVisible(false),
+          m_gridSpacingX(0),
+          m_gridSpacingY(0),
+          m_gridRotation(0),
+          m_gridColor(QStringLiteral("black")),
+          m_gridLineType(Qt::DashLine),
+          m_gridLineWeight(0)
     {}
 
     VLayoutPieceData(const VLayoutPieceData &piece)
@@ -103,7 +110,14 @@ public:
           patternInfo(piece.patternInfo),
           grainlinePoints(piece.grainlinePoints),
           m_tmPiece(piece.m_tmPiece),
-          m_tmPattern(piece.m_tmPattern)
+          m_tmPattern(piece.m_tmPattern),
+          m_gridVisible(piece.m_gridVisible),
+          m_gridSpacingX(piece.m_gridSpacingX),
+          m_gridSpacingY(piece.m_gridSpacingY),
+          m_gridRotation(piece.m_gridRotation),
+          m_gridColor(piece.m_gridColor),
+          m_gridLineType(piece.m_gridLineType),
+          m_gridLineWeight(piece.m_gridLineWeight)
     {}
 
     ~VLayoutPieceData() {}
@@ -122,6 +136,14 @@ public:
     QVector<QPointF>           grainlinePoints;    /// @brief grainlineInfo line
     VTextManager               m_tmPiece;          /// @brief m_tmPiece text manager for laying out piece info
     VTextManager               m_tmPattern;        /// @brief m_tmPattern text manager for laying out pattern info */
+
+    bool                       m_gridVisible;      /// @brief m_gridVisible whether the knitting grid is shown
+    qreal                      m_gridSpacingX;      /// @brief m_gridSpacingX horizontal grid spacing in pixels
+    qreal                      m_gridSpacingY;      /// @brief m_gridSpacingY vertical grid spacing in pixels
+    qreal                      m_gridRotation;      /// @brief m_gridRotation grid rotation in degrees
+    QString                    m_gridColor;         /// @brief m_gridColor grid line color
+    Qt::PenStyle               m_gridLineType;      /// @brief m_gridLineType grid line style
+    qreal                      m_gridLineWeight;    /// @brief m_gridLineWeight grid line weight in pixels
 
 private:
     VLayoutPieceData &operator=(const VLayoutPieceData &) Q_DECL_EQ_DELETE;

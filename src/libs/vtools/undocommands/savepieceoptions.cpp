@@ -94,6 +94,7 @@ void SavePieceOptions::undo()
         PatternPieceTool::addPieceLabel(doc, domElement, m_oldPiece);
         PatternPieceTool::addPatternLabel(doc, domElement, m_oldPiece);
         PatternPieceTool::addGrainline(doc, domElement, m_oldPiece);
+        PatternPieceTool::addGrid(doc, domElement, m_oldPiece);
         PatternPieceTool::addNodes(doc, domElement, m_oldPiece);
         PatternPieceTool::addCSARecords(doc, domElement, m_oldPiece.getCustomSARecords());
         PatternPieceTool::addInternalPaths(doc, domElement, m_oldPiece.getInternalPaths());
@@ -136,6 +137,7 @@ void SavePieceOptions::redo()
         PatternPieceTool::addPieceLabel(doc, domElement, m_newPiece);
         PatternPieceTool::addPatternLabel(doc, domElement, m_newPiece);
         PatternPieceTool::addGrainline(doc, domElement, m_newPiece);
+        PatternPieceTool::addGrid(doc, domElement, m_newPiece);
         PatternPieceTool::addNodes(doc, domElement, m_newPiece);
         PatternPieceTool::addCSARecords(doc, domElement, m_newPiece.getCustomSARecords());
         PatternPieceTool::addInternalPaths(doc, domElement, m_newPiece.getInternalPaths());

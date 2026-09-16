@@ -71,6 +71,7 @@
 #include "../vpatterndb/floatItemData/vpatternlabeldata.h"
 #include "../vpatterndb/floatItemData/vpiecelabeldata.h"
 #include "../vpatterndb/floatItemData/vgrainlinedata.h"
+#include "../vpatterndb/floatItemData/vpiecegriddata.h"
 #include "../vtools/tools/vdatatool.h"
 #include "../qmuparser/qmutokenparser.h"
 #include "../undocommands/addpiece.h"
@@ -99,6 +100,7 @@ const QString PatternPieceTool::TagCSA     = QStringLiteral("csa");
 const QString PatternPieceTool::TagRecord  = QStringLiteral("record");
 const QString PatternPieceTool::TagIPaths  = QStringLiteral("iPaths");
 const QString PatternPieceTool::TagAnchors = QStringLiteral("anchors");
+const QString PatternPieceTool::TagGrid    = QStringLiteral("grid");
 
 const QString PatternPieceTool::AttrVersion              = QStringLiteral("version");
 const QString PatternPieceTool::AttrForbidFlipping       = QStringLiteral("forbidFlipping");
@@ -116,6 +118,8 @@ const QString PatternPieceTool::AttrBottomRightAnchor    = QStringLiteral("botto
 const QString PatternPieceTool::AttrCenterAnchor         = QStringLiteral("centerAnchor");
 const QString PatternPieceTool::AttrTopAnchorPoint       = QStringLiteral("topAnchor");
 const QString PatternPieceTool::AttrBottomAnchorPoint    = QStringLiteral("bottomAnchor");
+const QString PatternPieceTool::AttrSpacingX             = QStringLiteral("spacingX");
+const QString PatternPieceTool::AttrSpacingY             = QStringLiteral("spacingY");
 
 //---------------------------------------------------------------------------------------------------------------------
 PatternPieceTool *PatternPieceTool::Create(QSharedPointer<DialogTool> dialog, VMainGraphicsScene *scene,
@@ -483,6 +487,23 @@ void PatternPieceTool::addGrainline(VAbstractPattern *doc, QDomElement &domEleme
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+void PatternPieceTool::addGrid(VAbstractPattern *doc, QDomElement &domElement, const VPiece &piece)
+{
+    // knitting grid
+    QDomElement domData = doc->createElement(TagGrid);
+    const VPieceGridData &data = piece.GetGridGeometry();
+    doc->SetAttribute(domData, VAbstractPattern::AttrVisible, data.IsVisible());
+    doc->SetAttribute(domData, AttrSpacingX,                  data.getSpacingX());
+    doc->SetAttribute(domData, AttrSpacingY,                  data.getSpacingY());
+    doc->SetAttribute(domData, VAbstractPattern::AttrRotation, data.getRotation());
+    doc->SetAttribute(domData, AttrLineColor,                 data.getLineColor());
+    doc->SetAttribute(domData, AttrLineType,                  PenStyleToLineType(data.getLineType()));
+    doc->SetAttribute(domData, AttrLineWeight,                data.getLineWeight());
+
+    domElement.appendChild(domData);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 QString PatternPieceTool::getTagName() const
 {
     return VAbstractPattern::TagPiece;
@@ -618,6 +639,7 @@ void PatternPieceTool::updatePieceDetails()
     updatePieceLabel();
     updatePatternLabel();
     updateGrainline();
+    updateGrid();
     updateInternalPaths();
 }
 
@@ -706,6 +728,60 @@ void PatternPieceTool::updateGrainline()
     else
     {
         m_grainLine->hide();
+    }
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+/// @brief updateGrid updates the piece's configurable knitting grid overlay
+//---------------------------------------------------------------------------------------------------------------------
+void PatternPieceTool::updateGrid()
+{
+    const VPiece piece = VAbstractTool::data.GetPiece(m_id);
+    const VPieceGridData &data = piece.GetGridGeometry();
+
+    if (!data.IsVisible())
+    {
+        m_grid->hide();
+        return;
+    }
+
+    try
+    {
+        Calculator calX;
+        const qreal spacingX = ToPixel(calX.EvalFormula(VAbstractTool::data.DataVariables(), data.getSpacingX()),
+                                       *VDataTool::data.GetPatternUnit());
+
+        Calculator calY;
+        const qreal spacingY = ToPixel(calY.EvalFormula(VAbstractTool::data.DataVariables(), data.getSpacingY()),
+                                       *VDataTool::data.GetPatternUnit());
+
+        Calculator calRotation;
+        const qreal rotation = calRotation.EvalFormula(VAbstractTool::data.DataVariables(), data.getRotation());
+
+        const qreal lineWeight = ToPixel(data.getLineWeight().toDouble(), Unit::Mm);
+
+        if (spacingX <= 0 || spacingY <= 0)
+        {
+            m_grid->hide();
+            return;
+        }
+
+        const QVector<QPointF> points = piece.MainPathPoints(this->getData());
+        if (points.isEmpty())
+        {
+            m_grid->hide();
+            return;
+        }
+
+        const QPainterPath clipPath = piece.MainPathPath(this->getData());
+        m_grid->updateGeometry(clipPath, points.first(), spacingX, spacingY, rotation, QColor(data.getLineColor()),
+                              data.getLineType(), lineWeight);
+        m_grid->show();
+    }
+    catch (qmu::QmuParserError &error)
+    {
+        Q_UNUSED(error)
+        m_grid->hide();
     }
 }
 
@@ -966,6 +1042,7 @@ void PatternPieceTool::AddToFile()
     addPieceLabel(doc, domElement, piece);
     addPatternLabel(doc, domElement, piece);
     addGrainline(doc, domElement, piece);
+    addGrid(doc, domElement, piece);
 
     // nodes
     addNodes(doc, domElement, piece);
@@ -1002,6 +1079,7 @@ void PatternPieceTool::RefreshDataInFile()
                 addPieceLabel(doc, domElement, piece);
                 addPatternLabel(doc, domElement, piece);
                 addGrainline(doc, domElement, piece);
+                addGrid(doc, domElement, piece);
                 addNodes(doc, domElement, piece);
                 addCSARecords(doc, domElement, piece.getCustomSARecords());
                 addInternalPaths(doc, domElement, piece.getInternalPaths());
@@ -1195,6 +1273,10 @@ void PatternPieceTool::contextMenuEvent(QGraphicsSceneContextMenuEvent *event)
     qDebug() << "Grainline IsVisible() = " << piece.GetGrainlineGeometry().IsVisible();
     showGrainline->setChecked(piece.GetGrainlineGeometry().IsVisible());
 
+    QAction *showGrid = menu.addAction(tr("Show Grid") + "\tK");
+    showGrid->setCheckable(true);
+    showGrid->setChecked(piece.GetGridGeometry().IsVisible());
+
     QAction *showPatternLabel = menu.addAction(QIcon("://icon/32x32/pattern_label.png"), tr("Show Pattern Label") + "\t[");
     showPatternLabel->setCheckable(true);
     showPatternLabel->setChecked(piece.GetPatternInfo().IsVisible());
@@ -1250,6 +1332,10 @@ void PatternPieceTool::contextMenuEvent(QGraphicsSceneContextMenuEvent *event)
     else if (selectedAction == showGrainline)
     {
         toggleGrainline(selectedAction->isChecked());
+    }
+    else if (selectedAction == showGrid)
+    {
+        toggleGrid(selectedAction->isChecked());
     }
     else if (selectedAction == showPatternLabel)
     {
@@ -1429,6 +1515,7 @@ PatternPieceTool::PatternPieceTool(VAbstractPattern *doc, VContainer *data, cons
     , m_dataLabel(new VTextGraphicsItem(this))
     , m_patternInfo(new VTextGraphicsItem(this))
     , m_grainLine(new VGrainlineItem(this))
+    , m_grid(new VGridItem(this))
     , m_notches(new QGraphicsPathItem(this))
 {
     VPiece piece = data->GetPiece(id);
@@ -2299,6 +2386,23 @@ void PatternPieceTool::toggleGrainline(bool checked)
     qApp->getUndoStack()->push(undoCommand);
 
     showStatus(tr("Grainline visibility changed: ") + (checked ? tr("Show") : tr("Hide")));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+/// @brief toggleGrid - routine to toggle the visibility of the piece's knitting grid.
+/// @param checked - true if grid is visible.
+//---------------------------------------------------------------------------------------------------------------------
+void PatternPieceTool::toggleGrid(bool checked)
+{
+    VPiece oldPiece = VAbstractTool::data.GetPiece(m_id);
+    VPiece newPiece = oldPiece;
+    newPiece.GetGridGeometry().SetVisible(checked);
+
+    SavePieceOptions *undoCommand = new SavePieceOptions(oldPiece, newPiece, doc, m_id);
+    undoCommand->setText(tr("Show grid"));
+    qApp->getUndoStack()->push(undoCommand);
+
+    showStatus(tr("Grid visibility changed: ") + (checked ? tr("Show") : tr("Hide")));
 }
 
 //---------------------------------------------------------------------------------------------------------------------

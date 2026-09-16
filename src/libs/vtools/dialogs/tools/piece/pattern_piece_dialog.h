@@ -58,10 +58,12 @@
 #include "../vpatterndb/floatItemData/vgrainlinedata.h"
 #include "../vpatterndb/floatItemData/vpatternlabeldata.h"
 #include "../vpatterndb/floatItemData/vpiecelabeldata.h"
+#include "../vpatterndb/floatItemData/vpiecegriddata.h"
 
 #include <QSoundEffect>
 
-enum TabOrder {Properties=0, Paths=1, SeamAllowance= 2, Labels=3, AnchorPoints=4, Grainline=5, Notches=6, Count=7};
+enum TabOrder {Properties=0, Paths=1, SeamAllowance= 2, Labels=3, AnchorPoints=4, Grainline=5, Grid=6, Notches=7,
+              Count=8};
 
 namespace Ui
 {
@@ -146,10 +148,12 @@ private slots:
     void                        notchCountChanged(int value);
 
     void                        updateGrainlineValues();
+    void                        updateGridValues();
     void                        updatePieceLabelValues();
     void                        updatePatternLabelValues();
 
     void                        editGrainlineFormula();
+    void                        editGridFormula();
     void                        editPieceLabelFormula();
     void                        editPatternLabelFormula();
 
@@ -157,6 +161,7 @@ private slots:
     void                        resetLabelsWarning();
 
     void                        enabledGrainline();
+    void                        enabledGrid();
     void                        enabledPieceLabel();
     void                        enabledPatternLabel();
 
@@ -208,6 +213,7 @@ private:
     VPieceLabelData             m_oldData;
     VPatternLabelData           m_oldGeom;
     VGrainlineData              m_oldGrainline;
+    VPieceGridData              m_oldGrid;
     QTimer                     *m_timerWidth;
     QTimer                     *m_timerWidthBefore;
     QTimer                     *m_timerWidthAfter;
@@ -266,6 +272,7 @@ private:
     void                        initializePropertiesTab();
     void                        initializeLabelsTab();
     void                        initializeGrainlineTab();
+    void                        initializeGridTab();
     void                        initializeAnchorsTab();
     void                        initializeNotchesTab();
     void                        initAnchorPointComboboxes();
@@ -275,6 +282,10 @@ private:
     void                        setGrainlineAngle(QString angleFormula);
     void                        setGrainlineLength(QString lengthFormula);
     void                        setGrainlineArrowLength(QString lengthFormula);
+
+    void                        setGridSpacingX(QString formula);
+    void                        setGridSpacingY(QString formula);
+    void                        setGridRotation(QString formula);
 
     void                        setPieceLabelWidth(QString widthFormula);
     void                        setPieceLabelHeight(QString heightFormula);

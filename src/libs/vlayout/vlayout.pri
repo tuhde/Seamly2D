@@ -15,6 +15,7 @@ HEADERS += \
     $$PWD/vtextmanager.h \
     $$PWD/vposter.h \
     $$PWD/vgraphicsfillitem.h \
+    $$PWD/vlayoutgriditem.h \
     $$PWD/vabstractpiece.h \
     $$PWD/vabstractpiece_p.h \
     $$PWD/vlayoutpiece.h \
@@ -32,6 +33,7 @@ SOURCES += \
     $$PWD/vtextmanager.cpp \
     $$PWD/vposter.cpp \
     $$PWD/vgraphicsfillitem.cpp \
+    $$PWD/vlayoutgriditem.cpp \
     $$PWD/vabstractpiece.cpp \
     $$PWD/vlayoutpiece.cpp \
     $$PWD/vlayoutpiecepath.cpp

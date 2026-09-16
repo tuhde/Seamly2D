@@ -78,6 +78,7 @@
 #include "vlayoutpiece_p.h"
 #include "vtextmanager.h"
 #include "vgraphicsfillitem.h"
+#include "vlayoutgriditem.h"
 
 static const int ObjectName = 0;
 
@@ -471,6 +472,12 @@ VLayoutPiece VLayoutPiece::Create(const VPiece &piece, const VContainer *pattern
         layoutPiece.setGrainline(grainlineGeom, pattern);
     }
 
+    const VPieceGridData& gridGeom = piece.GetGridGeometry();
+    if (gridGeom.IsVisible())
+    {
+        layoutPiece.setGrid(gridGeom, pattern);
+    }
+
     layoutPiece.SetSAWidth(qApp->toPixel(piece.GetSAWidth()));
     layoutPiece.SetForbidFlipping(piece.IsForbidFlipping());
 
@@ -687,6 +694,43 @@ void VLayoutPiece::setGrainline(const VGrainlineData& data, const VContainer* pa
 QVector<QPointF> VLayoutPiece::getGrainline() const
 {
     return Map(d->grainlinePoints);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void VLayoutPiece::setGrid(const VPieceGridData &data, const VContainer *pattern)
+{
+    SCASSERT(pattern != nullptr)
+
+    try
+    {
+        Calculator calX;
+        const qreal spacingX = qApp->toPixel(calX.EvalFormula(pattern->DataVariables(), data.getSpacingX()));
+
+        Calculator calY;
+        const qreal spacingY = qApp->toPixel(calY.EvalFormula(pattern->DataVariables(), data.getSpacingY()));
+
+        if (spacingX <= 0 || spacingY <= 0)
+        {
+            return;
+        }
+
+        Calculator calRotation;
+        const qreal rotation = calRotation.EvalFormula(pattern->DataVariables(), data.getRotation());
+
+        const qreal lineWeight = ToPixel(data.getLineWeight().toDouble(), Unit::Mm);
+
+        d->m_gridVisible    = true;
+        d->m_gridSpacingX   = spacingX;
+        d->m_gridSpacingY   = spacingY;
+        d->m_gridRotation   = rotation;
+        d->m_gridColor      = data.getLineColor();
+        d->m_gridLineType   = data.getLineType();
+        d->m_gridLineWeight = lineWeight;
+    }
+    catch (qmu::QmuParserError &error)
+    {
+        Q_UNUSED(error)
+    }
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -1108,6 +1152,7 @@ QGraphicsItem *VLayoutPiece::GetItem(bool textAsPaths) const
     createLabelItem(item, d->pieceLabel, d->m_tmPiece, textAsPaths);
     createLabelItem(item, d->patternInfo, d->m_tmPattern, textAsPaths);
     createGrainlineItem(item, textAsPaths);
+    createGridItem(item);
 
     return item;
 }
@@ -1235,6 +1280,36 @@ void VLayoutPiece::createGrainlineItem(QGraphicsItem *parent, bool textAsPaths) 
         path.lineTo(gPoints.at(i));
     }
     item->setPath(path);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void VLayoutPiece::createGridItem(QGraphicsItem *parent) const
+{
+    SCASSERT(parent != nullptr)
+
+    if (!d->m_gridVisible)
+    {
+        return;
+    }
+
+    const QVector<QPointF> points = getContourPoints();
+    if (points.count() < 3)
+    {
+        return;
+    }
+
+    QPainterPath clipPath;
+    clipPath.moveTo(points.at(0));
+    for (qint32 i = 1; i < points.count(); ++i)
+    {
+        clipPath.lineTo(points.at(i));
+    }
+    clipPath.lineTo(points.at(0));
+
+    VLayoutGridItem *item = new VLayoutGridItem(parent);
+    item->setData(ObjectName, QString("grid"));
+    item->updateGeometry(clipPath, points.at(0), d->m_gridSpacingX, d->m_gridSpacingY, d->m_gridRotation,
+                         QColor(d->m_gridColor), d->m_gridLineType, d->m_gridLineWeight);
 }
 
 //---------------------------------------------------------------------------------------------------------------------

@@ -136,6 +136,7 @@ PatternPieceDialog::PatternPieceDialog(const VContainer *data, const quint32 &to
     , m_oldData()
     , m_oldGeom()
     , m_oldGrainline()
+    , m_oldGrid()
     , m_timerWidth(nullptr)
     , m_timerWidthBefore(nullptr)
     , m_timerWidthAfter(nullptr)
@@ -166,6 +167,7 @@ PatternPieceDialog::PatternPieceDialog(const VContainer *data, const quint32 &to
     initializePropertiesTab();
     initializeLabelsTab();
     initializeGrainlineTab();
+    initializeGridTab();
     initializeAnchorsTab();
     initializeNotchesTab();
 
@@ -359,8 +361,20 @@ void PatternPieceDialog::SetPiece(const VPiece &piece)
     setGrainlineLength(m_oldGrainline.getLength());
     setGrainlineArrowLength(m_oldGrainline.getArrowLength());
 
+    m_oldGrid = piece.GetGridGeometry();
+    ui->showGrid_CheckBox->setChecked(m_oldGrid.IsVisible());
+    ui->gridGeometry_GroupBox->setEnabled(m_oldGrid.IsVisible());
+    ui->gridAppearance_GroupBox->setEnabled(m_oldGrid.IsVisible());
+    setGridSpacingX(m_oldGrid.getSpacingX());
+    setGridSpacingY(m_oldGrid.getSpacingY());
+    setGridRotation(m_oldGrid.getRotation());
+    ui->gridColor_ComboBox->setColor(m_oldGrid.getLineColor());
+    ui->gridLineType_ComboBox->setLineType(PenStyleToLineType(m_oldGrid.getLineType()));
+    ui->gridLineWeight_ComboBox->setLineWeight(m_oldGrid.getLineWeight().toDouble());
+
     validateObjects(isMainPathValid());
     enabledGrainline();
+    enabledGrid();
     enabledPieceLabel();
     enabledPatternLabel();
 
@@ -1808,6 +1822,50 @@ void PatternPieceDialog::updateGrainlineValues()
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+void PatternPieceDialog::updateGridValues()
+{
+    QPlainTextEdit *lineEdit[3] = {ui->gridSpacingXFormula_PlainTextEdit, ui->gridSpacingYFormula_PlainTextEdit,
+                                   ui->gridRotationFormula_PlainTextEdit};
+    bool formulasOK = true;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        QString formula = lineEdit[i]->toPlainText().simplified();
+        try
+        {
+            formula.replace("\n", " ");
+            formula = qApp->translateVariables()->FormulaFromUser(formula, qApp->Settings()->getOsSeparator());
+            Calculator calculation;
+            const qreal calculatedValue = calculation.EvalFormula(data->DataVariables(), formula);
+
+            if (qIsInf(calculatedValue) == true || qIsNaN(calculatedValue) == true)
+            {
+                throw qmu::QmuParserError(tr("Infinite/undefined result"));
+            }
+            else if (i < 2 && calculatedValue <= 0.0)
+            {
+                throw qmu::QmuParserError(tr("Spacing should be positive"));
+            }
+        }
+        catch (qmu::QmuParserError &error)
+        {
+            Q_UNUSED(error)
+            formulasOK = false;
+        }
+    }
+
+    if (formulasOK)
+    {
+        clearErrorText(TabOrder::Grid, tr("Grid "));
+    }
+    else
+    {
+        setErrorText(TabOrder::Grid, tr("Grid"));
+    }
+    CheckState();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 void PatternPieceDialog::updatePieceLabelValues()
 {
     QPlainTextEdit *lineEdit[3] = {ui->pieceLabelWidthFormula_LineEdit, ui->pieceLabelHeightFormula_LineEdit,
@@ -2000,6 +2058,24 @@ void PatternPieceDialog::enabledGrainline()
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+void PatternPieceDialog::enabledGrid()
+{
+    const bool showGrid = ui->showGrid_CheckBox->isChecked();
+    ui->gridGeometry_GroupBox->setEnabled(showGrid);
+    ui->gridAppearance_GroupBox->setEnabled(showGrid);
+
+    if (showGrid)
+    {
+        updateGridValues();
+    }
+    else
+    {
+        clearErrorText(TabOrder::Grid, tr("Grid "));
+        CheckState();
+    }
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 void PatternPieceDialog::enabledPieceLabel()
 {
     if (ui->pieceLabel_GroupBox->isChecked() == true)
@@ -2091,6 +2167,67 @@ void PatternPieceDialog::editGrainlineFormula()
             labelFormula->setPlainText(formula);
         }
         updateGrainlineValues();
+    }
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void PatternPieceDialog::editGridFormula()
+{
+    QPlainTextEdit *labelFormula;
+    bool checkForZero;
+    QString title;
+
+    if (sender() == ui->gridSpacingX_PushButton)
+    {
+        labelFormula = ui->gridSpacingXFormula_PlainTextEdit;
+        checkForZero = true;
+        title = tr("Edit horizontal spacing");
+    }
+    else if (sender() == ui->gridSpacingY_PushButton)
+    {
+        labelFormula = ui->gridSpacingYFormula_PlainTextEdit;
+        checkForZero = true;
+        title = tr("Edit vertical spacing");
+    }
+    else if (sender() == ui->gridRotation_PushButton)
+    {
+        labelFormula = ui->gridRotationFormula_PlainTextEdit;
+        checkForZero = false;
+        title = tr("Edit angle");
+    }
+    else
+    {
+        // should not get here!
+        return;
+    }
+
+    EditFormulaDialog dialog(data, NULL_ID, ToolDialog, this);
+    dialog.setWindowTitle(title);
+    dialog.SetFormula(qApp->translateVariables()->TryFormulaFromUser(labelFormula->toPlainText(), qApp->Settings()->getOsSeparator()));
+    dialog.setCheckZero(checkForZero);
+    if (dialog.exec() == QDialog::Accepted)
+    {
+        QString formula = dialog.GetFormula();
+        formula.replace("\n", " ");
+
+        if (sender() == ui->gridSpacingX_PushButton)
+        {
+            setGridSpacingX(formula);
+        }
+        else if (sender() == ui->gridSpacingY_PushButton)
+        {
+            setGridSpacingY(formula);
+        }
+        else if (sender() == ui->gridRotation_PushButton)
+        {
+            setGridRotation(formula);
+        }
+        else
+        {
+            // should not get here!
+            labelFormula->setPlainText(formula);
+        }
+        updateGridValues();
     }
 }
 
@@ -2552,6 +2689,15 @@ VPiece PatternPieceDialog::CreatePiece() const
     piece.GetGrainlineGeometry().setCenterAnchorPoint(getCurrentObjectId(ui->grainlineCenterAnchor_ComboBox));
     piece.GetGrainlineGeometry().setTopAnchorPoint(getCurrentObjectId(ui->grainlineTopAnchor_ComboBox));
     piece.GetGrainlineGeometry().setBottomAnchorPoint(getCurrentObjectId(ui->grainlineBottomAnchor_ComboBox));
+
+    piece.GetGridGeometry() = m_oldGrid;
+    piece.GetGridGeometry().SetVisible(ui->showGrid_CheckBox->isChecked());
+    piece.GetGridGeometry().setSpacingX(getFormulaFromUser(ui->gridSpacingXFormula_PlainTextEdit));
+    piece.GetGridGeometry().setSpacingY(getFormulaFromUser(ui->gridSpacingYFormula_PlainTextEdit));
+    piece.GetGridGeometry().setRotation(getFormulaFromUser(ui->gridRotationFormula_PlainTextEdit));
+    piece.GetGridGeometry().setLineColor(ui->gridColor_ComboBox->getColor());
+    piece.GetGridGeometry().setLineType(lineTypeToPenStyle(ui->gridLineType_ComboBox->getLineType()));
+    piece.GetGridGeometry().setLineWeight(QString::number(ui->gridLineWeight_ComboBox->getLineWeight()));
 
     if (applyAllowed == false)
     {
@@ -3272,6 +3418,36 @@ void PatternPieceDialog::initializeGrainlineTab()
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+void PatternPieceDialog::initializeGridTab()
+{
+    ui->showGrid_CheckBox->setChecked(false);
+    ui->gridGeometry_GroupBox->setEnabled(false);
+    ui->gridAppearance_GroupBox->setEnabled(false);
+
+    const qreal defaultSpacing = UnitConvertor(1, Unit::Cm, *data->GetPatternUnit());
+    ui->gridSpacingXFormula_PlainTextEdit->setPlainText(qApp->LocaleToString(defaultSpacing));
+    ui->gridSpacingYFormula_PlainTextEdit->setPlainText(qApp->LocaleToString(defaultSpacing));
+    ui->gridRotationFormula_PlainTextEdit->setPlainText(qApp->LocaleToString(0));
+
+    ui->gridColor_ComboBox->setColor(ColorBlack);
+    ui->gridLineType_ComboBox->setLineType(LineTypeDashLine);
+    ui->gridLineWeight_ComboBox->setLineWeight(0.2);
+
+    connect(ui->showGrid_CheckBox,     &QCheckBox::stateChanged, this, &PatternPieceDialog::enabledGrid);
+    connect(ui->gridSpacingX_PushButton, &QPushButton::clicked,  this, &PatternPieceDialog::editGridFormula);
+    connect(ui->gridSpacingY_PushButton, &QPushButton::clicked,  this, &PatternPieceDialog::editGridFormula);
+    connect(ui->gridRotation_PushButton, &QPushButton::clicked,  this, &PatternPieceDialog::editGridFormula);
+    connect(ui->gridSpacingXFormula_PlainTextEdit, &QPlainTextEdit::textChanged,
+            this, &PatternPieceDialog::updateGridValues);
+    connect(ui->gridSpacingYFormula_PlainTextEdit, &QPlainTextEdit::textChanged,
+            this, &PatternPieceDialog::updateGridValues);
+    connect(ui->gridRotationFormula_PlainTextEdit, &QPlainTextEdit::textChanged,
+            this, &PatternPieceDialog::updateGridValues);
+
+    enabledGrid();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 void PatternPieceDialog::initializeAnchorsTab()
 {
     const quint32 topAnchorId = getCurrentObjectId(ui->grainlineTopAnchor_ComboBox);
@@ -3472,6 +3648,48 @@ void PatternPieceDialog::setGrainlineArrowLength(QString lengthFormula)
     ui->arrowlLengthFormula_LineEdit->setPlainText(formula);
 
     MoveCursorToEnd(ui->arrowlLengthFormula_LineEdit);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void PatternPieceDialog::setGridSpacingX(QString formula)
+{
+    if (formula.isEmpty())
+    {
+        formula = QString().setNum(UnitConvertor(1, Unit::Cm, *data->GetPatternUnit()));
+    }
+
+    const QString userFormula = qApp->translateVariables()->FormulaToUser(formula, qApp->Settings()->getOsSeparator());
+    ui->gridSpacingXFormula_PlainTextEdit->setPlainText(userFormula);
+
+    MoveCursorToEnd(ui->gridSpacingXFormula_PlainTextEdit);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void PatternPieceDialog::setGridSpacingY(QString formula)
+{
+    if (formula.isEmpty())
+    {
+        formula = QString().setNum(UnitConvertor(1, Unit::Cm, *data->GetPatternUnit()));
+    }
+
+    const QString userFormula = qApp->translateVariables()->FormulaToUser(formula, qApp->Settings()->getOsSeparator());
+    ui->gridSpacingYFormula_PlainTextEdit->setPlainText(userFormula);
+
+    MoveCursorToEnd(ui->gridSpacingYFormula_PlainTextEdit);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void PatternPieceDialog::setGridRotation(QString formula)
+{
+    if (formula.isEmpty())
+    {
+        formula = QString("0");
+    }
+
+    const QString userFormula = qApp->translateVariables()->FormulaToUser(formula, qApp->Settings()->getOsSeparator());
+    ui->gridRotationFormula_PlainTextEdit->setPlainText(userFormula);
+
+    MoveCursorToEnd(ui->gridRotationFormula_PlainTextEdit);
 }
 
 //---------------------------------------------------------------------------------------------------------------------

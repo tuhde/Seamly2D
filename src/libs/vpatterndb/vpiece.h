@@ -79,6 +79,7 @@ class VPiecePath;
 class VPatternLabelData;
 class VPieceLabelData;
 class VGrainlineData;
+class VPieceGridData;
 class VContainer;
 class QPainterPath;
 class VPointF;
@@ -155,6 +156,9 @@ public:
 
     VGrainlineData&          GetGrainlineGeometry();
     const VGrainlineData&    GetGrainlineGeometry() const;
+
+    VPieceGridData&          GetGridGeometry();
+    const VPieceGridData&    GetGridGeometry() const;
 
 private:
     QSharedDataPointer<VPieceData> d;

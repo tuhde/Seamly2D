@@ -281,6 +281,35 @@ QListWidget::item:selected {
        </item>
        <item>
         <property name="text">
+         <string>Grid </string>
+        </property>
+        <property name="font">
+         <font>
+          <pointsize>9</pointsize>
+         </font>
+        </property>
+        <property name="textAlignment">
+         <set>AlignCenter</set>
+        </property>
+        <property name="foreground">
+         <brush brushstyle="NoBrush">
+          <color alpha="255">
+           <red>255</red>
+           <green>255</green>
+           <blue>255</blue>
+          </color>
+         </brush>
+        </property>
+        <property name="icon">
+         <iconset resource="../../../../vmisc/share/resources/icon.qrc">
+          <normaloff>:/icon/160x64/grainlines.png</normaloff>:/icon/160x64/grainlines.png</iconset>
+        </property>
+        <property name="flags">
+         <set>ItemIsSelectable|ItemIsUserCheckable|ItemIsEnabled</set>
+        </property>
+       </item>
+       <item>
+        <property name="text">
          <string>Notches </string>
         </property>
         <property name="font">
@@ -4933,6 +4962,445 @@ QListWidget::item:selected {
          </item>
         </layout>
        </widget>
+       <widget class="QWidget" name="grid_Page">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_Grid">
+         <item>
+          <widget class="QCheckBox" name="showGrid_CheckBox">
+           <property name="text">
+            <string>Show grid</string>
+           </property>
+           <property name="checked">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QGroupBox" name="gridGeometry_GroupBox">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>9</pointsize>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="title">
+            <string>Geometry</string>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_GridGeometry">
+            <item>
+             <layout class="QHBoxLayout" name="horizontalLayout_GridSpacingX">
+              <item alignment="Qt::AlignLeft">
+               <widget class="QLabel" name="gridSpacingX_Label">
+                <property name="minimumSize">
+                 <size>
+                  <width>110</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>Horizontal spacing:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <spacer name="horizontalSpacer_GridSpacingX">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>40</width>
+                  <height>20</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item alignment="Qt::AlignRight">
+               <widget class="QToolButton" name="gridSpacingX_PushButton">
+                <property name="maximumSize">
+                 <size>
+                  <width>24</width>
+                  <height>24</height>
+                 </size>
+                </property>
+                <property name="toolTip">
+                 <string>Formula wizard</string>
+                </property>
+                <property name="text">
+                 <string notr="true">...</string>
+                </property>
+                <property name="icon">
+                 <iconset resource="../../../../vmisc/share/resources/icon.qrc">
+                  <normaloff>:/icon/24x24/fx.png</normaloff>:/icon/24x24/fx.png</iconset>
+                </property>
+                <property name="iconSize">
+                 <size>
+                  <width>24</width>
+                  <height>24</height>
+                 </size>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <layout class="QFormLayout" name="formLayout_GridSpacingX">
+              <item row="0" column="0">
+               <spacer name="horizontalSpacer_GridSpacingX2">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>90</width>
+                  <height>20</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item row="0" column="1">
+               <widget class="QPlainTextEdit" name="gridSpacingXFormula_PlainTextEdit">
+                <property name="maximumSize">
+                 <size>
+                  <width>16777215</width>
+                  <height>52</height>
+                 </size>
+                </property>
+                <property name="toolTip">
+                 <string>Calculation</string>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Sunken</enum>
+                </property>
+                <property name="tabChangesFocus">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <layout class="QHBoxLayout" name="horizontalLayout_GridSpacingY">
+              <item alignment="Qt::AlignLeft">
+               <widget class="QLabel" name="gridSpacingY_Label">
+                <property name="minimumSize">
+                 <size>
+                  <width>110</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>Vertical spacing:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <spacer name="horizontalSpacer_GridSpacingY">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>40</width>
+                  <height>20</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item alignment="Qt::AlignRight">
+               <widget class="QToolButton" name="gridSpacingY_PushButton">
+                <property name="maximumSize">
+                 <size>
+                  <width>24</width>
+                  <height>24</height>
+                 </size>
+                </property>
+                <property name="toolTip">
+                 <string>Formula wizard</string>
+                </property>
+                <property name="text">
+                 <string notr="true">...</string>
+                </property>
+                <property name="icon">
+                 <iconset resource="../../../../vmisc/share/resources/icon.qrc">
+                  <normaloff>:/icon/24x24/fx.png</normaloff>:/icon/24x24/fx.png</iconset>
+                </property>
+                <property name="iconSize">
+                 <size>
+                  <width>24</width>
+                  <height>24</height>
+                 </size>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <layout class="QFormLayout" name="formLayout_GridSpacingY">
+              <item row="0" column="0">
+               <spacer name="horizontalSpacer_GridSpacingY2">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>90</width>
+                  <height>20</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item row="0" column="1">
+               <widget class="QPlainTextEdit" name="gridSpacingYFormula_PlainTextEdit">
+                <property name="maximumSize">
+                 <size>
+                  <width>16777215</width>
+                  <height>52</height>
+                 </size>
+                </property>
+                <property name="toolTip">
+                 <string>Calculation</string>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Sunken</enum>
+                </property>
+                <property name="tabChangesFocus">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <layout class="QHBoxLayout" name="horizontalLayout_GridRotation">
+              <item alignment="Qt::AlignLeft">
+               <widget class="QLabel" name="gridRotation_Label">
+                <property name="minimumSize">
+                 <size>
+                  <width>110</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>Rotation:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <spacer name="horizontalSpacer_GridRotation">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>40</width>
+                  <height>20</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item alignment="Qt::AlignRight">
+               <widget class="QToolButton" name="gridRotation_PushButton">
+                <property name="maximumSize">
+                 <size>
+                  <width>24</width>
+                  <height>24</height>
+                 </size>
+                </property>
+                <property name="toolTip">
+                 <string>Formula wizard</string>
+                </property>
+                <property name="text">
+                 <string notr="true">...</string>
+                </property>
+                <property name="icon">
+                 <iconset resource="../../../../vmisc/share/resources/icon.qrc">
+                  <normaloff>:/icon/24x24/fx.png</normaloff>:/icon/24x24/fx.png</iconset>
+                </property>
+                <property name="iconSize">
+                 <size>
+                  <width>24</width>
+                  <height>24</height>
+                 </size>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <layout class="QFormLayout" name="formLayout_GridRotation">
+              <item row="0" column="0">
+               <spacer name="horizontalSpacer_GridRotation2">
+                <property name="orientation">
+                 <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>90</width>
+                  <height>20</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+              <item row="0" column="1">
+               <widget class="QPlainTextEdit" name="gridRotationFormula_PlainTextEdit">
+                <property name="maximumSize">
+                 <size>
+                  <width>16777215</width>
+                  <height>52</height>
+                 </size>
+                </property>
+                <property name="toolTip">
+                 <string>Calculation</string>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Sunken</enum>
+                </property>
+                <property name="tabChangesFocus">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QGroupBox" name="gridAppearance_GroupBox">
+           <property name="font">
+            <font>
+             <pointsize>9</pointsize>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="title">
+            <string>Appearance</string>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_GridAppearance">
+            <item>
+             <layout class="QFormLayout" name="formLayout_GridAppearance">
+              <property name="labelAlignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <item row="0" column="0">
+               <widget class="QLabel" name="gridColor_Label">
+                <property name="text">
+                 <string>Color:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="ColorComboBox" name="gridColor_ComboBox">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="minimumSize">
+                 <size>
+                  <width>80</width>
+                  <height>0</height>
+                 </size>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="gridLineType_Label">
+                <property name="text">
+                 <string>Line type:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <widget class="LineTypeComboBox" name="gridLineType_ComboBox">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="minimumSize">
+                 <size>
+                  <width>80</width>
+                  <height>0</height>
+                 </size>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="0">
+               <widget class="QLabel" name="gridLineWeight_Label">
+                <property name="text">
+                 <string>Line weight:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="1">
+               <widget class="LineWeightComboBox" name="gridLineWeight_ComboBox">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="minimumSize">
+                 <size>
+                  <width>80</width>
+                  <height>0</height>
+                 </size>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <spacer name="verticalSpacer_Grid">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </widget>
        <widget class="QWidget" name="notches_Page">
         <layout class="QVBoxLayout" name="verticalLayout_17">
          <item>
@@ -5872,6 +6340,21 @@ QListWidget::item:selected {
    <class>PieceFillComboBox</class>
    <extends>QComboBox</extends>
    <header location="global">fill_combobox.h</header>
+  </customwidget>
+  <customwidget>
+   <class>LineTypeComboBox</class>
+   <extends>QComboBox</extends>
+   <header>linetype_combobox.h</header>
+  </customwidget>
+  <customwidget>
+   <class>ColorComboBox</class>
+   <extends>QComboBox</extends>
+   <header location="global">color_combobox.h</header>
+  </customwidget>
+  <customwidget>
+   <class>LineWeightComboBox</class>
+   <extends>QComboBox</extends>
+   <header location="global">lineweight_combobox.h</header>
   </customwidget>
  </customwidgets>
  <resources>

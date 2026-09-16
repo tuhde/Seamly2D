@@ -395,6 +395,7 @@ enum class Vis : ToolVisHolderType
     NoBrush,
     CurvePathItem,
     GrainlineItem,
+    GridItem,
     PieceItem,
     TextGraphicsItem,
     ScenePoint,

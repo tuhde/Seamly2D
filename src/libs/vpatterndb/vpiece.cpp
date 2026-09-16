@@ -593,6 +593,24 @@ const VGrainlineData &VPiece::GetGrainlineGeometry() const
     return d->m_glGrainline;
 }
 
+//******************************************************************************
+/// @brief VPiece::GetGridGeometry full access to the piece's knitting grid geometry object
+/// @return reference to grid geometry object
+//******************************************************************************
+VPieceGridData &VPiece::GetGridGeometry()
+{
+    return d->m_pieceGrid;
+}
+
+//******************************************************************************
+/// @brief VPiece::GetGridGeometry returns the read-only reference to the piece's knitting grid geometry object
+/// @return reference to grid geometry object
+//******************************************************************************
+const VPieceGridData &VPiece::GetGridGeometry() const
+{
+    return d->m_pieceGrid;
+}
+
 //---------------------------------------------------------------------------------------------------------------------
 QVector<VPieceNode> VPiece::GetUnitedPath(const VContainer *data) const
 {

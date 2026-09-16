@@ -373,6 +373,7 @@ void VAbstractConverter::Save()
     QTextStream out(&m_tmpFile);
     out.setEncoding(QStringConverter::Encoding::Utf8);
     save(out, indent);
+    out.flush();//push QTextStream's own buffer into m_tmpFile before flushing the device
 
     if (!m_tmpFile.flush())
     {

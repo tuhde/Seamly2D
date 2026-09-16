@@ -62,6 +62,7 @@
 #include "floatItemData/vpiecelabeldata.h"
 #include "floatItemData/vpatternlabeldata.h"
 #include "floatItemData/vgrainlinedata.h"
+#include "floatItemData/vpiecegriddata.h"
 
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_GCC("-Weffc++")
@@ -81,6 +82,7 @@ public:
         , m_ppData()
         , m_piPatternInfo()
         , m_glGrainline()
+        , m_pieceGrid()
         , m_formulaWidth('0')
     {}
 
@@ -96,6 +98,7 @@ public:
         , m_ppData(piece.m_ppData)
         , m_piPatternInfo(piece.m_piPatternInfo)
         , m_glGrainline(piece.m_glGrainline)
+        , m_pieceGrid(piece.m_pieceGrid)
         , m_formulaWidth(piece.m_formulaWidth)
     {}
 
@@ -111,6 +114,7 @@ public:
     VPieceLabelData         m_ppData;        //! @brief Pattern piece data
     VPatternLabelData       m_piPatternInfo; //! @brief Pattern info coordinates
     VGrainlineData          m_glGrainline;   //! @brief m_glGrainline grainline geometry object
+    VPieceGridData          m_pieceGrid;     //! @brief m_pieceGrid knitting grid geometry object
     QString                 m_formulaWidth;
 
 private:
