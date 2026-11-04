@@ -6926,6 +6926,11 @@ bool mcpConfirmFileAccess(QWidget *parent, const QString &title, const QString &
     {
         return true;
     }
+    // Test hook (like SEAMLY_MCP_TOKEN): automated tests cannot click a dialog. Never set this in normal use.
+    if (qEnvironmentVariableIsSet("SEAMLY_MCP_ASSUME_YES"))
+    {
+        return true;
+    }
     QMessageBox box(parent);
     box.setIcon(QMessageBox::Question);
     box.setWindowTitle(title);
