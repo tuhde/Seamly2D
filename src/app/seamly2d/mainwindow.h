@@ -136,6 +136,13 @@ public:
     /// `value` is in the pattern unit. The user is asked to confirm (the file is shared by all patterns that use it);
     /// the change is one undo step that writes the old value back. Individual measurement files only.
     QJsonObject mcpSetMeasurement(const QString &name, double value, QString &error);
+    /// Creates an individual measurement file for the MCP tool `create_measurements`: `values` maps measurement names to
+    /// numbers in `unit`. The user is asked to confirm. Never overwrites an existing file.
+    QJsonObject mcpCreateMeasurements(const QString &path, const QString &unit, const QJsonObject &values,
+                                      const QString &givenName, const QString &familyName, QString &error);
+    /// Links an individual measurement file to the open pattern for the MCP tool `attach_measurements`, like
+    /// Measurements > Load Individual. The user is asked to confirm.
+    QJsonObject mcpAttachMeasurements(const QString &path, QString &error);
     /// Undo / redo for the MCP tools; returns the text of the step that was undone / redone (empty if none).
     QString mcpUndo(bool undo);
 

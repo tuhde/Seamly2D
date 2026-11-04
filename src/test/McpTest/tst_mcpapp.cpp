@@ -239,7 +239,7 @@ void TST_McpApp::toolsAreListed()
     const QStringList expected{
         "get_pattern_info", "list_objects", "add_draft_block", "add_point", "add_line", "add_curve", "add_arc",
         "update_object", "delete_object", "list_variables", "set_variable", "delete_variable", "add_piece",
-        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "set_measurement", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
+        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
         "export_layout"};
     for (const QString &name : expected)
     {
@@ -1117,4 +1117,63 @@ void TST_McpApp::measurementValuesCanBeChanged()
     QVERIFY(fails(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("waist_circ")}})).contains(QStringLiteral("required")));
     QCOMPARE(measurement(QStringLiteral("waist_circ")), 84.0);
     QCOMPARE(fileValue(), QStringLiteral("84"));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::measurementFileCanBeCreatedAndAttached()
+{
+    const QString folder = m_workDir.path() + QLatin1String("/newmeas");
+    QVERIFY(QDir().mkpath(folder));
+    const QString file = folder + QLatin1String("/anna.smis");
+
+    stopApp();
+    QVERIFY(startApp());
+
+    // The standard names can be searched.
+    const QJsonObject found = ok(QStringLiteral("list_standard_measurements"), obj({{QStringLiteral("query"), QStringLiteral("waist_circ")}}));
+    QVERIFY(found.value(QStringLiteral("matches")).toInt() >= 1);
+    QCOMPARE(found.value(QStringLiteral("measurements")).toArray().at(0).toObject().value(QStringLiteral("name")).toString(),
+             QStringLiteral("waist_circ"));
+
+    // Refused: unknown names, bad values, relative paths, wrong suffix; nothing is written.
+    QVERIFY(fails(QStringLiteral("create_measurements"), obj({{QStringLiteral("path"), file}, {QStringLiteral("values"), obj({{QStringLiteral("no_such_name"), 1}})}}))
+                .contains(QStringLiteral("not a standard measurement")));
+    QVERIFY(fails(QStringLiteral("create_measurements"), obj({{QStringLiteral("path"), file}, {QStringLiteral("values"), obj({{QStringLiteral("waist_circ"), -5}})}}))
+                .contains(QStringLiteral("0 to 100000")));
+    QVERIFY(fails(QStringLiteral("create_measurements"), obj({{QStringLiteral("path"), QStringLiteral("anna.smis")}, {QStringLiteral("values"), obj({{QStringLiteral("waist_circ"), 80}})}}))
+                .contains(QStringLiteral("absolute")));
+    QVERIFY(fails(QStringLiteral("create_measurements"), obj({{QStringLiteral("path"), folder + QLatin1String("/anna.txt")}, {QStringLiteral("values"), obj({{QStringLiteral("waist_circ"), 80}})}}))
+                .contains(QStringLiteral(".smis")));
+    QVERIFY(!QFileInfo::exists(file));
+
+    ok(QStringLiteral("create_measurements"),
+       obj({{QStringLiteral("path"), file}, {QStringLiteral("unit"), QStringLiteral("cm")},
+            {QStringLiteral("values"), obj({{QStringLiteral("waist_circ"), 80}, {QStringLiteral("hip_circ"), 98}})}}));
+    QVERIFY(QFileInfo::exists(file));
+    // An existing file is never overwritten.
+    QVERIFY(fails(QStringLiteral("create_measurements"), obj({{QStringLiteral("path"), file}, {QStringLiteral("values"), obj({{QStringLiteral("waist_circ"), 1}})}}))
+                .contains(QStringLiteral("already exists")));
+
+    // Attaching needs a draft block.
+    QVERIFY(fails(QStringLiteral("attach_measurements"), obj({{QStringLiteral("path"), file}})).contains(QStringLiteral("draft block")));
+    const QJsonObject block = ok(QStringLiteral("add_draft_block"), obj({{QStringLiteral("unit"), QStringLiteral("cm")}}));
+    const double baseX = block.value(QStringLiteral("basePoint")).toObject().value(QStringLiteral("x")).toDouble();
+    QVERIFY(fails(QStringLiteral("attach_measurements"), obj({{QStringLiteral("path"), folder + QLatin1String("/missing.smis")}})).contains(QStringLiteral("existing")));
+    ok(QStringLiteral("attach_measurements"), obj({{QStringLiteral("path"), file}}));
+
+    double waist = -1;
+    for (const QJsonValue &m : ok(QStringLiteral("list_variables")).value(QStringLiteral("measurements")).toArray())
+    {
+        if (m.toObject().value(QStringLiteral("name")).toString() == QLatin1String("waist_circ"))
+        {
+            waist = m.toObject().value(QStringLiteral("value")).toDouble(-1);
+        }
+    }
+    QCOMPARE(waist, 80.0);
+
+    // The measurement can be used in a formula, and changed afterwards.
+    const QJsonObject b = ok(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("endLine")}, {QStringLiteral("base_point_id"), 1}, {QStringLiteral("length"), QStringLiteral("waist_circ / 4")}, {QStringLiteral("angle"), QStringLiteral("0")}, {QStringLiteral("name"), QStringLiteral("B")}}));
+    QVERIFY(qAbs(b.value(QStringLiteral("x")).toDouble() - (baseX + 20)) < 0.01);   // waist_circ / 4 = 20 cm
+    ok(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("waist_circ")}, {QStringLiteral("value"), 88}}));
+    QVERIFY(qAbs(point(QStringLiteral("B")).value(QStringLiteral("x")).toDouble() - (baseX + 22)) < 0.01);
 }

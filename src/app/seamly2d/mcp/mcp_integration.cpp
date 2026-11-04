@@ -41,7 +41,9 @@ const char *const kInstructions =
     "Seamly2D is a pattern-making application. This server controls the pattern that is open in the running "
     "Seamly2D window. Every change appears on the canvas at once and can be undone with Undo.\n"
     "Work like this: first read the current state (get_pattern_info, list_objects). If the pattern has no draft block "
-    "yet, create one with add_draft_block (it also sets the unit). Then change the pattern (add_point, add_line, add_curve, add_arc) and "
+    "yet, create one with add_draft_block (it also sets the unit). To draft from someone's measurements, create a "
+    "measurement file (create_measurements, names from list_standard_measurements) and attach it "
+    "(attach_measurements), then use the measurement names in formulas. Then change the pattern (add_point, add_line, add_curve, add_arc) and "
     "check the result with list_objects. Points refer to earlier points by their id. A drawing becomes a pattern "
     "piece (what gets laid out and exported) with add_piece, which takes the outline's point ids in order; add the details a cutter needs with set_grainline, set_notch and update_piece (quantity, fold, label texts). Call "
     "fit_view after drawing, use screenshot to look at the result yourself, and show_mode to switch between the draft and piece view, so that the user sees the "
@@ -203,6 +205,9 @@ void McpIntegration::registerTools()
     m_registry.registerTool(PatternEditor::addCurveTool());
     m_registry.registerTool(PatternEditor::addArcTool());
     m_registry.registerTool(PatternEditor::listVariablesTool());
+    m_registry.registerTool(PatternEditor::listStandardMeasurementsTool());
+    m_registry.registerTool(PatternEditor::createMeasurementsTool());
+    m_registry.registerTool(PatternEditor::attachMeasurementsTool());
     m_registry.registerTool(PatternEditor::setMeasurementTool());
     m_registry.registerTool(PatternEditor::undoTool());
     m_registry.registerTool(PatternEditor::redoTool());

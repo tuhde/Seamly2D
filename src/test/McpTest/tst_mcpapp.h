@@ -60,6 +60,7 @@ private slots:
     void exportWritesFiles();
     void screenshotReturnsAPng();
     void measurementValuesCanBeChanged();
+    void measurementFileCanBeCreatedAndAttached();
 
 private:
     bool        startApp();

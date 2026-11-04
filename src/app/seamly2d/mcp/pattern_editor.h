@@ -27,6 +27,7 @@
 #define PATTERN_EDITOR_H
 
 #include <QJsonObject>
+#include <QStringList>
 
 #include "../../libs/vmcp/mcptoolregistry.h"
 
@@ -88,6 +89,13 @@ public:
     static McpToolResult setGrainline(const QJsonObject &arguments);
     static McpToolResult setNotch(const QJsonObject &arguments);
 
+    /// Tools `list_standard_measurements`, `create_measurements` and `attach_measurements`.
+    static McpToolResult listStandardMeasurements(const QJsonObject &arguments);
+    static McpToolResult createMeasurements(const QJsonObject &arguments);
+    static McpToolResult attachMeasurements(const QJsonObject &arguments);
+    /// The names of the program's standard measurements.
+    static QStringList   standardMeasurementNames();
+
     /// Tool `set_measurement` (value in the measurement file, after the user confirmed) and `undo` / `redo`.
     static McpToolResult setMeasurement(const QJsonObject &arguments);
     static McpToolResult undoRedo(const QJsonObject &arguments, bool undo);
@@ -105,6 +113,9 @@ public:
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
     static McpTool setMeasurementTool();
+    static McpTool listStandardMeasurementsTool();
+    static McpTool createMeasurementsTool();
+    static McpTool attachMeasurementsTool();
     static McpTool undoTool();
     static McpTool redoTool();
     static McpTool updatePieceTool();

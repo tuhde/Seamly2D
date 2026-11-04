@@ -85,6 +85,7 @@
 #include "../../libs/vpatterndb/floatItemData/vgrainlinedata.h"
 #include "../../libs/vpatterndb/floatItemData/vpiecelabeldata.h"
 #include "../../libs/vpatterndb/vpiece.h"
+#include "../../libs/vpatterndb/vtranslatemeasurements.h"
 #include "../../libs/vpatterndb/vpiecenode.h"
 #include "../../libs/vpatterndb/vpiecepath.h"
 #include "../../libs/vtools/undocommands/deletepiece.h"
@@ -3364,6 +3365,109 @@ McpToolResult PatternEditor::undoRedo(const QJsonObject &arguments, bool undo)
                              QJsonObject{{QStringLiteral("steps"), done}});
 }
 
+namespace
+{
+/// Gives access to the table of standard measurements (a protected member of VTranslateMeasurements).
+class StandardMeasurements : public VTranslateMeasurements
+{
+public:
+    QStringList names() const { return m_measurements.keys(); }
+};
+} // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+QStringList PatternEditor::standardMeasurementNames()
+{
+    static const StandardMeasurements table;
+    return table.names();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::listStandardMeasurements(const QJsonObject &arguments)
+{
+    static const StandardMeasurements table;
+    const QString query = stringArg(arguments, "query");
+    const QJsonValue limitValue = arguments.value(QStringLiteral("limit"));
+    const int limit = qBound(1, limitValue.isDouble() ? static_cast<int>(limitValue.toDouble()) : 40, 400);
+    QJsonArray list;
+    int matches = 0;
+    for (const QString &name : table.names())
+    {
+        const QString label = table.guiText(name);
+        const QString description = table.Description(name);
+        const QString code = table.MNumber(name);
+        if (!query.isEmpty() && !name.contains(query, Qt::CaseInsensitive) && !label.contains(query, Qt::CaseInsensitive)
+            && !description.contains(query, Qt::CaseInsensitive) && !code.contains(query, Qt::CaseInsensitive))
+        {
+            continue;
+        }
+        ++matches;
+        if (list.size() < limit)
+        {
+            list.append(QJsonObject{{QStringLiteral("name"), name}, {QStringLiteral("code"), code},
+                                    {QStringLiteral("label"), label}, {QStringLiteral("description"), description}});
+        }
+    }
+    return McpToolResult::ok(QStringLiteral("%1 of %2 matching standard measurement(s). Use 'name' in create_measurements "
+                                            "and in formulas; custom measurements are written @name.")
+                                 .arg(list.size()).arg(matches),
+                             QJsonObject{{QStringLiteral("total"), table.names().size()},
+                                         {QStringLiteral("matches"), matches},
+                                         {QStringLiteral("measurements"), list}});
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::createMeasurements(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    const QJsonValue values = arguments.value(QStringLiteral("values"));
+    if (!values.isObject())
+    {
+        return McpToolResult::error(QStringLiteral("'values' is required: an object mapping measurement names to "
+                                                   "numbers, e.g. {\"waist_circ\": 84, \"hip_circ\": 100}."));
+    }
+    QString error;
+    const QJsonObject result = window->mcpCreateMeasurements(stringArg(arguments, "path"), stringArg(arguments, "unit"),
+                                                             values.toObject(), stringArg(arguments, "given_name"),
+                                                             stringArg(arguments, "family_name"), error);
+    if (!error.isEmpty())
+    {
+        return McpToolResult::error(error);
+    }
+    return McpToolResult::ok(QStringLiteral("Created %1 with %2 measurement(s) in %3. Use attach_measurements to use it "
+                                            "in the pattern.")
+                                 .arg(result.value(QStringLiteral("path")).toString())
+                                 .arg(result.value(QStringLiteral("measurements")).toInt())
+                                 .arg(result.value(QStringLiteral("unit")).toString()),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::attachMeasurements(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    QString error;
+    const QJsonObject result = window->mcpAttachMeasurements(stringArg(arguments, "path"), error);
+    if (!error.isEmpty())
+    {
+        return McpToolResult::error(error);
+    }
+    return McpToolResult::ok(QStringLiteral("The pattern now uses %1 (%2 measurements, unit %3). Measurement names can "
+                                            "be used in formulas; see list_variables for their values.")
+                                 .arg(result.value(QStringLiteral("path")).toString())
+                                 .arg(result.value(QStringLiteral("measurements")).toInt())
+                                 .arg(result.value(QStringLiteral("unit")).toString()),
+                             result);
+}
+
 //---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::addDraftBlock(const QJsonObject &arguments)
 {
@@ -4000,6 +4104,73 @@ McpTool PatternEditor::redoTool()
                                     QJsonObject{{QStringLiteral("steps"), idProperty(QStringLiteral("How many steps "
                                                                                                      "(1-50)."))}}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::undoRedo(arguments, false); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::listStandardMeasurementsTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("list_standard_measurements");
+    tool.description =
+        QStringLiteral("Lists the standard measurement names the program knows (waist_circ, hip_circ, height_knee, "
+                       "...) with their code, label and description. Search with 'query' (matches name, label, "
+                       "description and code, e.g. \"waist\" or \"leg\"); 'limit' caps the list (default 40). Use "
+                       "the names in create_measurements and in formulas.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("query"), stringProperty(QStringLiteral("Text to search for."))},
+                                                {QStringLiteral("limit"), idProperty(QStringLiteral("Maximum number of results (1-400)."))}}}};
+    tool.readOnly = true;
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::listStandardMeasurements(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::createMeasurementsTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("create_measurements");
+    tool.description =
+        QStringLiteral("Creates a new individual measurement file (.smis) for a person, so that patterns can be drafted "
+                       "from measurements: 'values' maps measurement names to numbers in 'unit' (default: the "
+                       "pattern's unit, or cm). Names are the standard names (see list_standard_measurements) or "
+                       "custom ones written @name. Never overwrites an existing file. Seamly2D asks the user to "
+                       "confirm the new file. It does not change the pattern: use attach_measurements afterwards.");
+    tool.inputSchema = QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("path"), stringProperty(QStringLiteral("Absolute path of the new file; .smis is appended if missing."))},
+                     {QStringLiteral("values"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                  {QStringLiteral("additionalProperties"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}}},
+                                  {QStringLiteral("description"), QStringLiteral("Measurement name -> value.")}}},
+                     {QStringLiteral("unit"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("mm"), QStringLiteral("cm"), QStringLiteral("inch")}}}},
+                     {QStringLiteral("given_name"), stringProperty(QStringLiteral("Optional: the person's given name."))},
+                     {QStringLiteral("family_name"), stringProperty(QStringLiteral("Optional: the person's family name."))}}},
+        {QStringLiteral("required"), QJsonArray{QStringLiteral("path"), QStringLiteral("values")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::createMeasurements(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::attachMeasurementsTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("attach_measurements");
+    tool.description =
+        QStringLiteral("Makes the open pattern use an individual measurement file (Measurements > Load Individual): "
+                       "the file's measurements become available in formulas, and set_measurement can change them. "
+                       "Needs a draft block; refused if the pattern already uses measurements that the file does not "
+                       "contain. Seamly2D asks the user to confirm the file. Not on the undo stack; attach another "
+                       "file to change it. Use create_measurements to make a file first.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("path"), stringProperty(QStringLiteral("Absolute path of the .smis file."))}}},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("path")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::attachMeasurements(arguments); };
     return tool;
 }
 

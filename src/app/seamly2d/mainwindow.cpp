@@ -100,6 +100,7 @@
 #include "mcp/mcp_integration.h"
 #ifdef SEAMLY_HAVE_QTERMWIDGET
 #include "mcp/claude_shell_panel.h"
+#include "mcp/pattern_editor.h"
 #endif
 #include "../vtools/undocommands/rename_draftblock.h"
 #include "../vtools/undocommands/delete_draftblock.h"
@@ -7450,6 +7451,200 @@ private:
     bool                  m_firstRedo = true;
 };
 } // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpCreateMeasurements(const QString &path, const QString &unit, const QJsonObject &values,
+                                              const QString &givenName, const QString &familyName, QString &error)
+{
+    const QFileInfo info(path.trimmed());
+    if (!info.isAbsolute())
+    {
+        error = QStringLiteral("'path' must be an absolute path.");
+        return QJsonObject();
+    }
+    QString target = QDir::cleanPath(info.absoluteFilePath());
+    if (info.suffix().isEmpty())
+    {
+        target += QLatin1String(".") + smisExt;
+    }
+    if (QFileInfo(target).suffix() != smisExt)
+    {
+        error = QStringLiteral("Individual measurement files end in .%1 (got \"%2\").").arg(smisExt, info.fileName());
+        return QJsonObject();
+    }
+    const QFileInfo targetInfo(target);
+    if (targetInfo.exists())
+    {
+        error = QStringLiteral("\"%1\" already exists; choose another name (an existing measurement file is never "
+                               "overwritten).").arg(target);
+        return QJsonObject();
+    }
+    if (!targetInfo.dir().exists() || !QFileInfo(targetInfo.dir().absolutePath()).isWritable())
+    {
+        error = QStringLiteral("The folder \"%1\" does not exist or is not writable.").arg(targetInfo.dir().absolutePath());
+        return QJsonObject();
+    }
+    const QString unitName = unit.isEmpty() ? (draft_block_combobox->count() > 0 ? UnitsToStr(qApp->patternUnit())
+                                                                                 : QStringLiteral("cm"))
+                                           : unit.toLower();
+    if (unitName != QLatin1String("mm") && unitName != QLatin1String("cm") && unitName != QLatin1String("inch"))
+    {
+        error = QStringLiteral("'unit' must be \"mm\", \"cm\" or \"inch\".");
+        return QJsonObject();
+    }
+    if (values.isEmpty())
+    {
+        error = QStringLiteral("'values' must contain at least one measurement (name: value); see "
+                               "list_standard_measurements for the names.");
+        return QJsonObject();
+    }
+
+    // Names: the program's standard measurements, or custom ones written @name.
+    const QStringList known = PatternEditor::standardMeasurementNames();
+    static const QRegularExpression customName(QStringLiteral("^@[\\p{L}_][\\p{L}\\p{N}_]*$"));
+    QStringList names = values.keys();
+    names.sort();
+    for (const QString &name : names)
+    {
+        if (!known.contains(name) && !name.contains(customName))
+        {
+            error = QStringLiteral("\"%1\" is not a standard measurement name. Use a name from "
+                                   "list_standard_measurements, or a custom name starting with @ (e.g. @sleeve_ease).")
+                        .arg(name);
+            return QJsonObject();
+        }
+        const QJsonValue v = values.value(name);
+        if (!v.isDouble() || !std::isfinite(v.toDouble()) || v.toDouble() < 0 || v.toDouble() > 100000)
+        {
+            error = QStringLiteral("The value of \"%1\" must be a number from 0 to 100000 (in %2).").arg(name, unitName);
+            return QJsonObject();
+        }
+    }
+
+    if (!mcpConfirmFileAccess(this, tr("Claude wants to create a measurement file"),
+                              tr("Claude wants to create this measurement file with %1 measurement(s) in %2:\n\n%3")
+                                  .arg(names.size()).arg(unitName, target),
+                              target))
+    {
+        error = QStringLiteral("The user did not allow creating \"%1\".").arg(target);
+        return QJsonObject();
+    }
+
+    MeasurementDoc measurements(StrToUnits(unitName), pattern);
+    for (const QString &name : names)
+    {
+        measurements.addEmpty(name, QString::number(values.value(name).toDouble(), 'g', 10));
+    }
+    if (!givenName.isEmpty())
+    {
+        measurements.SetGivenName(givenName);
+    }
+    if (!familyName.isEmpty())
+    {
+        measurements.SetFamilyName(familyName);
+    }
+    QString saveError;
+    if (!measurements.SaveDocument(target, saveError))
+    {
+        error = QStringLiteral("Could not write the measurement file: %1").arg(saveError);
+        return QJsonObject();
+    }
+    return QJsonObject{{QStringLiteral("path"), target},
+                       {QStringLiteral("unit"), unitName},
+                       {QStringLiteral("measurements"), names.size()}};
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpAttachMeasurements(const QString &path, QString &error)
+{
+    if (draft_block_combobox->count() == 0)
+    {
+        error = QStringLiteral("The pattern has no draft block yet; create one first with add_draft_block.");
+        return QJsonObject();
+    }
+    const QFileInfo info(path.trimmed());
+    if (!info.isAbsolute() || !info.exists() || !info.isFile() || !info.isReadable())
+    {
+        error = QStringLiteral("'path' must be the absolute path of an existing measurement file.");
+        return QJsonObject();
+    }
+    if (info.suffix() != smisExt && info.suffix() != vitExt)
+    {
+        error = QStringLiteral("Only individual measurement files (.%1) can be attached here.").arg(smisExt);
+        return QJsonObject();
+    }
+    const QString file = QDir::cleanPath(info.absoluteFilePath());
+
+    // The measurements the pattern already uses must be in the new file.
+    QFile source(file);
+    QDomDocument xml;
+    if (!source.open(QIODevice::ReadOnly) || !xml.setContent(&source))
+    {
+        error = QStringLiteral("\"%1\" is not a readable measurement file.").arg(file);
+        return QJsonObject();
+    }
+    if (xml.documentElement().tagName() != QLatin1String("smis") && xml.documentElement().tagName() != QLatin1String("vit"))
+    {
+        error = QStringLiteral("\"%1\" is not an individual measurement file (multisize tables are not supported "
+                               "here).").arg(file);
+        return QJsonObject();
+    }
+    QSet<QString> available;
+    const QDomNodeList entries = xml.elementsByTagName(QStringLiteral("m"));
+    for (int i = 0; i < entries.size(); ++i)
+    {
+        available.insert(entries.at(i).toElement().attribute(QStringLiteral("name")));
+    }
+    QStringList missing;
+    for (const QString &used : doc->ListMeasurements())
+    {
+        if (!available.contains(used))
+        {
+            missing << used;
+        }
+    }
+    if (!missing.isEmpty())
+    {
+        error = QStringLiteral("The pattern uses measurements that this file does not contain: %1.")
+                    .arg(missing.join(QStringLiteral(", ")));
+        return QJsonObject();
+    }
+
+    if (!mcpConfirmFileAccess(this, tr("Claude wants to use a measurement file"),
+                              tr("Claude wants to use this measurement file for the pattern:\n\n%1").arg(file), file))
+    {
+        error = QStringLiteral("The user did not allow using \"%1\".").arg(file);
+        return QJsonObject();
+    }
+
+    const QString previous = doc->MPath().isEmpty() ? QString() : AbsoluteMPath(qApp->getFilePath(), doc->MPath());
+    if (!loadMeasurements(file))
+    {
+        if (!previous.isEmpty())
+        {
+            loadMeasurements(previous);   // keep working with the file that was in use
+        }
+        error = QStringLiteral("The measurement file could not be used (see the message in Seamly2D).");
+        return QJsonObject();
+    }
+    // The same steps as Measurements > Load Individual.
+    if (!doc->MPath().isEmpty() && !m_watcher->files().isEmpty())
+    {
+        m_watcher->removePaths(m_watcher->files());
+    }
+    ui->unloadMeasurements_Action->setEnabled(true);
+    doc->SetMPath(RelativeMPath(qApp->getFilePath(), file));
+    m_watcher->addPath(file);
+    patternChangesWereSaved(false);
+    ui->editCurrent_Action->setEnabled(true);
+    setStatusMessage(tr("Measurements loaded"));
+    doc->LiteParseTree(Document::LiteParse);
+    updateWindowTitle();
+
+    return QJsonObject{{QStringLiteral("path"), file},
+                       {QStringLiteral("unit"), UnitsToStr(m_measurements->measurementUnits())},
+                       {QStringLiteral("measurements"), available.size()}};
+}
 
 //---------------------------------------------------------------------------------------------------------------------
 QString MainWindow::mcpUndo(bool undo)
