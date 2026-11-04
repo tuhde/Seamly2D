@@ -52,12 +52,20 @@ public:
     /// Tool `fit_view`: zooms the canvas so that the whole drawing is visible.
     static McpToolResult fitView(const QJsonObject &arguments);
 
+    /// Tool `delete_object`: deletes a point or line that nothing else uses.
+    static McpToolResult deleteObject(const QJsonObject &arguments);
+
+    /// Tool `update_object`: changes parameters (formulas, references, name, base point position) of an object.
+    static McpToolResult updateObject(const QJsonObject &arguments);
+
     /// Tool `add_draft_block`: creates a draft block with its base point (for the first block also sets the unit).
     static McpToolResult addDraftBlock(const QJsonObject &arguments);
 
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool deleteObjectTool();
+    static McpTool updateObjectTool();
     static McpTool addLineTool();
     static McpTool fitViewTool();
 };
