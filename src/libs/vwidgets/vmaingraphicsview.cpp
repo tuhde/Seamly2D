@@ -145,7 +145,7 @@ void GraphicsViewZoom::gentleZoom(qreal factor)
             // Because QGraphicsView centers the picture when it's smaller than the view. And QGraphicsView's scrolls
             // boundaries don't allow to put any picture point at any viewport position we will provide fictive scene
             // size. Temporary and bigger than view, scene size will help position an image under cursor.
-            fictiveSceneRect(m_view->scene(), m_view);
+            fictiveSceneRect(m_view);
         }
         m_view->centerOn(targetScenePos);
         QPointF deltaViewPos = targetViewPos - QPointF(m_view->viewport()->width() / 2.0,
@@ -358,9 +358,8 @@ void GraphicsViewZoom::pinchTriggered(QPinchGesture *gesture)
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-void GraphicsViewZoom::fictiveSceneRect(QGraphicsScene *sc, QGraphicsView *view)
+void GraphicsViewZoom::fictiveSceneRect(QGraphicsView *view)
 {
-    SCASSERT(sc != nullptr)
     SCASSERT(view != nullptr)
 
     //Calculate view rect
@@ -378,13 +377,13 @@ void GraphicsViewZoom::fictiveSceneRect(QGraphicsScene *sc, QGraphicsView *view)
 
     viewRect = QRectF(topLeftRay.p2(), bottomRightRay.p2());
 
-    //Calculate scene rect
-    const QRectF sceneRect = sc->sceneRect();
+    //Calculate scene rect. Grow only the view's rect, the scene's rect stays as is.
+    const QRectF sceneRect = view->sceneRect();
 
     //Unite two rects
     const QRectF newRect = sceneRect.united(viewRect);
 
-    sc->setSceneRect(newRect);
+    view->setSceneRect(newRect);
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -843,11 +842,17 @@ void VMainGraphicsView::allowRubberBand(bool value)
     SCASSERT(sc != nullptr)
     SCASSERT(view != nullptr)
 
+    //Calculate view rect
+    const QRectF viewRect = SceneVisibleArea(view);
+
+    // Pad by half the view size so panning can move any point to the center of the view.
+    // The padding only goes on the view's scene rect, so the scene's own rect (used by exports) stays tight.
+    const qreal margin_x = viewRect.width() / 2.0;
+    const qreal margin_y = viewRect.height() / 2.0;
+    const bool is_view_scene = view->scene() == sc;
+
     if (item == nullptr)
     {
-        //Calculate view rect
-        const QRectF viewRect = SceneVisibleArea(view);
-
         //Calculate scene rect
         VMainGraphicsScene *currentScene = qobject_cast<VMainGraphicsScene *>(sc);
         SCASSERT(currentScene)
@@ -855,11 +860,38 @@ void VMainGraphicsView::allowRubberBand(bool value)
 
         //Unite two rects
         sc->setSceneRect(itemsRect.united(viewRect));
+
+        if (is_view_scene)
+        {
+            view->setSceneRect(itemsRect.adjusted(-margin_x, -margin_y, margin_x, margin_y).united(viewRect));
+        }
     }
-    else if (not sc->sceneRect().contains(item->sceneBoundingRect()))
+    else
     {
-        sc->setSceneRect(sc->sceneRect().united(item->sceneBoundingRect()));
+        const QRectF item_rect = item->sceneBoundingRect();
+        if (not sc->sceneRect().contains(item_rect))
+        {
+            sc->setSceneRect(sc->sceneRect().united(item_rect));
+        }
+
+        const QRectF padded_item_rect = item_rect.adjusted(-margin_x, -margin_y, margin_x, margin_y);
+        if (is_view_scene && not view->sceneRect().contains(padded_item_rect))
+        {
+            view->setSceneRect(view->sceneRect().united(padded_item_rect));
+        }
     }
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+/// @brief setScene sets the scene and drops the previous scene's panning rect, so the view follows the new
+/// scene's rect until NewSceneRect() pads it again.
+///
+/// @param scene scene.
+//---------------------------------------------------------------------------------------------------------------------
+void VMainGraphicsView::setScene(QGraphicsScene *scene)
+{
+    QGraphicsView::setScene(scene);
+    setSceneRect(QRectF());
 }
 
 //---------------------------------------------------------------------------------------------------------------------
