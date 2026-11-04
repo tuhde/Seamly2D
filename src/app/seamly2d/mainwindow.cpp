@@ -7366,6 +7366,57 @@ QJsonObject MainWindow::mcpExportLayout(const QJsonObject &options, QString &err
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+bool MainWindow::mcpZoom(const QString &target, quint32 pieceId, QString &error)
+{
+    if (draft_block_combobox->count() == 0)
+    {
+        error = QStringLiteral("There is nothing to show yet.");
+        return false;
+    }
+    if (target == QLatin1String("all"))
+    {
+        ui->view->zoomToFit();                       // the toolbar's "Zoom fit"
+        return true;
+    }
+    if (target == QLatin1String("block"))
+    {
+        if (qApp->getCurrentScene() != draftScene)
+        {
+            error = QStringLiteral("The draft block can only be shown in the draft view (switch with show_mode).");
+            return false;
+        }
+        const QRectF rect = doc->ActiveDrawBoundingRect();   // what the toolbar's "Zoom selected" does in the draft view
+        if (rect.isEmpty())
+        {
+            error = QStringLiteral("The active draft block has nothing to show yet.");
+            return false;
+        }
+        ui->view->zoomToRect(rect);
+        return true;
+    }
+    if (target == QLatin1String("piece"))
+    {
+        if (qApp->getCurrentScene() != pieceScene)
+        {
+            error = QStringLiteral("A piece can only be shown in the piece view (switch with show_mode).");
+            return false;
+        }
+        QGraphicsItem *item = qobject_cast<PatternPieceTool *>(VAbstractPattern::getTool(pieceId));
+        if (item == nullptr)
+        {
+            error = QStringLiteral("There is no piece with id %1 (see list_pieces).").arg(pieceId);
+            return false;
+        }
+        QRectF rect = item->boundingRect();
+        rect.translate(item->scenePos());
+        ui->view->zoomToRect(rect);
+        return true;
+    }
+    error = QStringLiteral("Unknown target \"%1\". Use \"all\", \"block\" or \"piece\".").arg(target);
+    return false;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 void MainWindow::mcpPiecesChanged()
 {
     if (pattern->DataPieces()->size() > 0)

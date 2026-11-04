@@ -601,14 +601,31 @@ McpToolResult PatternEditor::addLine(const QJsonObject &arguments)
 //---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::fitView(const QJsonObject &arguments)
 {
-    Q_UNUSED(arguments)
-    VMainGraphicsView *view = qApp->getSceneView();
-    if (view == nullptr)
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
     {
         return McpToolResult::error(QStringLiteral("No pattern is open in Seamly2D."));
     }
-    view->zoomToFit();
-    return McpToolResult::ok(QStringLiteral("Zoomed the canvas so that the whole drawing is visible."));
+    const QString target = stringArg(arguments, "target").isEmpty() ? QStringLiteral("all") : stringArg(arguments, "target");
+    quint32 pieceId = NULL_ID;
+    if (target == QLatin1String("piece"))
+    {
+        const QJsonValue id = arguments.value(QStringLiteral("piece_id"));
+        if (!id.isDouble() || id.toDouble() < 1)
+        {
+            return McpToolResult::error(QStringLiteral("'piece_id' is required for target \"piece\" (see list_pieces)."));
+        }
+        pieceId = static_cast<quint32>(id.toDouble());
+    }
+    QString error;
+    if (!window->mcpZoom(target, pieceId, error))
+    {
+        return McpToolResult::error(error);
+    }
+    static const QHash<QString, QString> what{{QStringLiteral("all"), QStringLiteral("the whole drawing")},
+                                              {QStringLiteral("block"), QStringLiteral("the active draft block")},
+                                              {QStringLiteral("piece"), QStringLiteral("the piece")}};
+    return McpToolResult::ok(QStringLiteral("Zoomed the canvas to %1.").arg(what.value(target)));
 }
 
 namespace
@@ -2606,10 +2623,20 @@ McpTool PatternEditor::fitViewTool()
 {
     McpTool tool;
     tool.name = QStringLiteral("fit_view");
-    tool.description = QStringLiteral("Zooms the canvas so that the whole drawing is visible. Call it after drawing "
-                                      "so that the user sees everything. Does not change the pattern.");
-    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
-                                   {QStringLiteral("properties"), QJsonObject()}};
+    tool.description = QStringLiteral("Zooms the canvas so that the user sees what you worked on; call it after "
+                                      "drawing. target \"all\" (default) is the toolbar's Zoom fit: everything in "
+                                      "the current view, all draft blocks. \"block\" is Zoom selected in the draft "
+                                      "view: only the active draft block. \"piece\" zooms to one piece in the piece "
+                                      "view (give piece_id from list_pieces). Does not change the pattern.");
+    tool.inputSchema = QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("target"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("all"), QStringLiteral("block"),
+                                                                      QStringLiteral("piece")}}}},
+                     {QStringLiteral("piece_id"),
+                      idProperty(QStringLiteral("target \"piece\": id of the piece to show."))}}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::fitView(arguments); };
     return tool;
 }

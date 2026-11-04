@@ -129,6 +129,9 @@ public:
     /// Exports the pattern pieces for the MCP tool `export_layout`: arranged on pages ("layout") or one by one ("pieces"),
     /// as svg, pdf, png, ... The user is asked to confirm the destination folder. Never shows other dialogs. GUI thread only.
     QJsonObject mcpExportLayout(const QJsonObject &options, QString &error);
+    /// Zooms the view for the MCP tool `fit_view`: "all" (Zoom fit), "block" (Zoom selected in the draft view: the
+    /// active draft block) or "piece" (the piece with `pieceId` in the piece view). Returns false and sets `error`.
+    bool mcpZoom(const QString &target, quint32 pieceId, QString &error);
     /// The scene that shows the pattern pieces (needed to create pieces without the Piece tool dialog).
     VMainGraphicsScene *mcpPieceScene() const { return pieceScene; }
     /// Enables the piece-related tools after a piece was added, like closing the Piece tool dialog does.
