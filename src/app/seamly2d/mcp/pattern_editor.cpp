@@ -2762,6 +2762,10 @@ const QStringList kNotchTypes{QStringLiteral("slit"), QStringLiteral("t"), QStri
                                   QStringLiteral("v_external"), QStringLiteral("u"), QStringLiteral("castle"),
                                   QStringLiteral("diamond")};
 
+const QStringList kCornerTypes{QStringLiteral("by_length"), QStringLiteral("intersection"),
+                               QStringLiteral("first_edge_symmetry"), QStringLiteral("second_edge_symmetry"),
+                               QStringLiteral("first_edge_right_angle"), QStringLiteral("second_edge_right_angle")};
+
 QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
 {
     QJsonObject result{{QStringLiteral("id"), static_cast<qint64>(id)},
@@ -2830,6 +2834,32 @@ QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
         }
     }
     result.insert(QStringLiteral("anchorPoints"), anchors);
+    QJsonArray corners;
+    for (int i = 0; i < piece.GetPath().nodeCount(); ++i)
+    {
+        const VPieceNode node = piece.GetPath().at(i);
+        if (node.GetTypeTool() != Tool::NodePoint
+            || (node.GetAngleType() == PieceNodeAngle::ByLength && node.GetFormulaSABefore() == currentSeamAllowance
+                && node.GetFormulaSAAfter() == currentSeamAllowance))
+        {
+            continue;
+        }
+        try
+        {
+            const QSharedPointer<VPointF> p = pieceData->GeometricObject<VPointF>(node.GetId());
+            corners.append(QJsonObject{{QStringLiteral("pointId"), static_cast<qint64>(p->getIdObject())},
+                                       {QStringLiteral("name"), p->name()},
+                                       {QStringLiteral("corner"), kCornerTypes.value(static_cast<int>(node.GetAngleType()))},
+                                       {QStringLiteral("widthBefore"), node.GetFormulaSABefore() == currentSeamAllowance
+                                                                           ? QStringLiteral("default") : node.GetFormulaSABefore()},
+                                       {QStringLiteral("widthAfter"), node.GetFormulaSAAfter() == currentSeamAllowance
+                                                                          ? QStringLiteral("default") : node.GetFormulaSAAfter()}});
+        }
+        catch (const VException &)
+        {
+        }
+    }
+    result.insert(QStringLiteral("corners"), corners);
     auto labelJson = [](const VPatternLabelData &label)
     {
         return QJsonObject{{QStringLiteral("visible"), label.IsVisible()},
@@ -3879,6 +3909,150 @@ McpTool PatternEditor::setLabelTool()
                      {QStringLiteral("angle"), stringProperty(QStringLiteral("Rotation in degrees."))}}},
         {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setLabel(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+namespace
+{
+} // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::setCorner(const QJsonObject &arguments)
+{
+    PieceRef ref;
+    QString error;
+    if (!findPiece(arguments, ref, error))
+    {
+        return McpToolResult::error(error);
+    }
+    const QJsonValue pointValue = arguments.value(QStringLiteral("point_id"));
+    if (!pointValue.isDouble() || pointValue.toDouble() < 1)
+    {
+        return McpToolResult::error(QStringLiteral("'point_id' is required: the id of a point of the piece's outline "
+                                                   "(the id used in add_piece)."));
+    }
+    const quint32 pointId = static_cast<quint32>(pointValue.toDouble());
+    VPiece piece = ref.piece;
+    if (!piece.hasSeamAllowance())
+    {
+        return McpToolResult::error(QStringLiteral("Piece \"%1\" has no seam allowance (switch it on with "
+                                                   "update_piece first).").arg(piece.GetName()));
+    }
+    int index = -1;
+    for (int i = 0; i < piece.GetPath().nodeCount() && index < 0; ++i)
+    {
+        const VPieceNode node = piece.GetPath().at(i);
+        if (node.GetTypeTool() != Tool::NodePoint)
+        {
+            continue;
+        }
+        try
+        {
+            if (ref.data->GeometricObject<VPointF>(node.GetId())->getIdObject() == pointId)
+            {
+                index = i;
+            }
+        }
+        catch (const VException &)
+        {
+        }
+    }
+    if (index < 0)
+    {
+        return McpToolResult::error(QStringLiteral("Point %1 is not a point of the outline of piece \"%2\".")
+                                        .arg(pointId).arg(piece.GetName()));
+    }
+    static const QStringList known{QStringLiteral("piece_id"), QStringLiteral("point_id"), QStringLiteral("corner"),
+                                   QStringLiteral("width_before"), QStringLiteral("width_after")};
+    for (auto it = arguments.constBegin(); it != arguments.constEnd(); ++it)
+    {
+        if (!known.contains(it.key()))
+        {
+            return McpToolResult::error(QStringLiteral("Unknown argument '%1'. Known: %2.")
+                                            .arg(it.key(), known.join(QStringLiteral(", "))));
+        }
+    }
+    if (arguments.size() < 3)
+    {
+        return McpToolResult::error(QStringLiteral("Nothing to change: give 'corner' (%1), 'width_before' and/or "
+                                                   "'width_after'.").arg(kCornerTypes.join(QStringLiteral(", "))));
+    }
+
+    VPieceNode node = piece.GetPath().at(index);
+    const QHash<QString, QSharedPointer<VInternalVariable>> variables = *ref.data->DataVariables();
+    if (arguments.contains(QStringLiteral("corner")))
+    {
+        const int type = kCornerTypes.indexOf(arguments.value(QStringLiteral("corner")).toString().toLower());
+        if (type < 0)
+        {
+            return McpToolResult::error(QStringLiteral("'corner' must be one of: %1.")
+                                            .arg(kCornerTypes.join(QStringLiteral(", "))));
+        }
+        node.SetAngleType(static_cast<PieceNodeAngle>(type));
+    }
+    for (const char *key : {"width_before", "width_after"})
+    {
+        if (!arguments.contains(QLatin1String(key)))
+        {
+            continue;
+        }
+        const QJsonValue raw = arguments.value(QLatin1String(key));
+        QString formula = raw.isDouble() ? QString::number(raw.toDouble()) : raw.toString().trimmed();
+        double value = 0;
+        if (formula == QLatin1String("default"))
+        {
+            formula = currentSeamAllowance;   // follow the width of the piece
+        }
+        else
+        {
+            if (!checkFormula(variables, QLatin1String(key), formula, value, error))
+            {
+                return McpToolResult::error(error);
+            }
+            if (value < 0)
+            {
+                return McpToolResult::error(QStringLiteral("'%1' must not be negative.").arg(QLatin1String(key)));
+            }
+        }
+        if (QLatin1String(key) == QLatin1String("width_before"))
+        {
+            node.setBeforeSAFormula(formula);
+        }
+        else
+        {
+            node.setAfterSAFormula(formula);
+        }
+    }
+    piece.GetPath()[index] = node;
+    return applyPieceChange(ref, piece, QObject::tr("Claude: change seam allowance corner of %1").arg(piece.GetName()),
+                            QStringLiteral("Changed the seam allowance at point %1 of piece \"%2\".")
+                                .arg(pointId).arg(piece.GetName()));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::setCornerTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("set_corner");
+    tool.description =
+        QStringLiteral("Changes the seam allowance at one outline point of a piece (the piece needs a seam "
+                       "allowance): 'width_before' and 'width_after' are the widths on the two sides of the corner "
+                       "(pattern unit, formula, or \"default\" for the width of the piece; for example 5 on a hem "
+                       "edge), 'corner' how the allowance turns the corner: by_length (default), intersection, "
+                       "first_edge_symmetry, second_edge_symmetry, first_edge_right_angle, second_edge_right_angle. "
+                       "One Undo step.");
+    tool.inputSchema = QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("piece_id"), idProperty(QStringLiteral("Piece id from list_pieces."))},
+                     {QStringLiteral("point_id"), idProperty(QStringLiteral("Id of the outline point."))},
+                     {QStringLiteral("corner"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                                            {QStringLiteral("enum"), QJsonArray::fromStringList(kCornerTypes)}}},
+                     {QStringLiteral("width_before"), stringProperty(QStringLiteral("Width before the point: number, formula or \"default\"."))},
+                     {QStringLiteral("width_after"), stringProperty(QStringLiteral("Width after the point: number, formula or \"default\"."))}}},
+        {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id"), QStringLiteral("point_id")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setCorner(arguments); };
     return tool;
 }
 

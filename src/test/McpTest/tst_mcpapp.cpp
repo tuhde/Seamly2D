@@ -239,7 +239,7 @@ void TST_McpApp::toolsAreListed()
     const QStringList expected{
         "get_pattern_info", "list_objects", "add_draft_block", "add_point", "add_line", "add_curve", "add_arc", "add_elliptical_arc",
         "update_object", "delete_object", "list_variables", "set_variable", "delete_variable", "add_piece",
-        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "add_anchor_point", "add_internal_path", "set_label", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
+        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "add_anchor_point", "add_internal_path", "set_label", "set_corner", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
         "export_layout"};
     for (const QString &name : expected)
     {
@@ -975,6 +975,26 @@ void TST_McpApp::pieceDetailsAreCuttingInstructions()
     ok(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("visible"), false}}));
     QVERIFY(!pieceLabel(QStringLiteral("piece")).value(QStringLiteral("visible")).toBool());
     QCOMPARE(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("fontSize")).toInt(), 12);
+
+    // Seam allowance corners: a wider hem on one side of a point, another way of turning the corner.
+    auto corners = [this]()
+    {
+        return ok(QStringLiteral("list_pieces")).value(QStringLiteral("pieces")).toArray().at(0).toObject().value(QStringLiteral("corners")).toArray();
+    };
+    QCOMPARE(corners().size(), 0);
+    ok(QStringLiteral("set_corner"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}, {QStringLiteral("width_after"), 5},
+                                          {QStringLiteral("corner"), QStringLiteral("intersection")}}));
+    QCOMPARE(corners().size(), 1);
+    QCOMPARE(corners().at(0).toObject().value(QStringLiteral("widthAfter")).toString(), QStringLiteral("5"));
+    QCOMPARE(corners().at(0).toObject().value(QStringLiteral("widthBefore")).toString(), QStringLiteral("default"));
+    QCOMPARE(corners().at(0).toObject().value(QStringLiteral("corner")).toString(), QStringLiteral("intersection"));
+    QVERIFY(fails(QStringLiteral("set_corner"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}, {QStringLiteral("width_after"), -1}})).contains(QStringLiteral("negative")));
+    QVERIFY(fails(QStringLiteral("set_corner"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}, {QStringLiteral("corner"), QStringLiteral("round")}})).contains(QStringLiteral("'corner' must be")));
+    QVERIFY(fails(QStringLiteral("set_corner"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointM}, {QStringLiteral("width_after"), 5}})).contains(QStringLiteral("not a point of the outline")));
+    QVERIFY(fails(QStringLiteral("set_corner"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}})).contains(QStringLiteral("Nothing to change")));
+    ok(QStringLiteral("set_corner"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}, {QStringLiteral("width_after"), QStringLiteral("default")},
+                                          {QStringLiteral("corner"), QStringLiteral("by_length")}}));
+    QCOMPARE(corners().size(), 0);
 
     // Everything above is one undo step per call and shows up in list_pieces.
     const QJsonObject listed = ok(QStringLiteral("list_pieces")).value(QStringLiteral("pieces")).toArray().at(0).toObject();
