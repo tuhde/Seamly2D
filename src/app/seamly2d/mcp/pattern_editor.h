@@ -67,12 +67,22 @@ public:
     static McpToolResult addCurve(const QJsonObject &arguments);
     static McpToolResult addArc(const QJsonObject &arguments);
 
+    /// Tools `add_piece`, `list_pieces`, `delete_piece` and `show_mode` (draft or piece view).
+    static McpToolResult addPiece(const QJsonObject &arguments);
+    static McpToolResult listPieces(const QJsonObject &arguments);
+    static McpToolResult deletePiece(const QJsonObject &arguments);
+    static McpToolResult showMode(const QJsonObject &arguments);
+
     /// Tool `add_draft_block`: creates a draft block with its base point (for the first block also sets the unit).
     static McpToolResult addDraftBlock(const QJsonObject &arguments);
 
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool addPieceTool();
+    static McpTool listPiecesTool();
+    static McpTool deletePieceTool();
+    static McpTool showModeTool();
     static McpTool addCurveTool();
     static McpTool addArcTool();
     static McpTool listVariablesTool();

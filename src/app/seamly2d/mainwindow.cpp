@@ -6908,6 +6908,50 @@ QJsonObject MainWindow::mcpAddDraftBlock(const QString &name, const QString &uni
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+void MainWindow::mcpPiecesChanged()
+{
+    if (pattern->DataPieces()->size() > 0)
+    {
+        // The same tools that ClosedPiecesDialogWithApply() enables once the first piece exists.
+        ui->anchorPoint_ToolButton->setEnabled(true);
+        ui->internalPath_ToolButton->setEnabled(true);
+        ui->insertNodes_ToolButton->setEnabled(true);
+        ui->importImage_ToolButton->setEnabled(true);
+        ui->anchorPoint_Action->setEnabled(true);
+        ui->internalPath_Action->setEnabled(true);
+        ui->images_Action->setEnabled(true);
+        ui->insertNodes_Action->setEnabled(true);
+    }
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+bool MainWindow::mcpShowMode(const QString &mode, QString &error)
+{
+    if (draft_block_combobox->count() == 0)
+    {
+        error = QStringLiteral("The pattern has no draft block yet.");
+        return false;
+    }
+    if (mode == QLatin1String("draft"))
+    {
+        showDraftMode(true);
+        return true;
+    }
+    if (mode == QLatin1String("piece"))
+    {
+        if (pattern->DataPieces()->isEmpty())
+        {
+            error = QStringLiteral("The pattern has no pieces yet; create one with add_piece first.");
+            return false;
+        }
+        showPieceMode(true);
+        return true;
+    }
+    error = QStringLiteral("Unknown mode \"%1\". Use \"draft\" or \"piece\".").arg(mode);
+    return false;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 QJsonObject MainWindow::mcpPatternInfo() const
 {
     QJsonArray blocks;

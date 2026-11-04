@@ -119,6 +119,13 @@ public:
     /// on failure. GUI thread only.
     QJsonObject mcpAddDraftBlock(const QString &name, const QString &unit, QString &error);
 
+    /// The scene that shows the pattern pieces (needed to create pieces without the Piece tool dialog).
+    VMainGraphicsScene *mcpPieceScene() const { return pieceScene; }
+    /// Enables the piece-related tools after a piece was added, like closing the Piece tool dialog does.
+    void mcpPiecesChanged();
+    /// Switches the view to "draft" or "piece" mode. Returns false and sets `error` if that is not possible.
+    bool mcpShowMode(const QString &mode, QString &error);
+
 public slots:
     void processCommandLine();
     void penChanged(Pen pen);

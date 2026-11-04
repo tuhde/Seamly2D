@@ -31,6 +31,7 @@
 #include <QJsonArray>
 #include <QMap>
 #include <QRegularExpression>
+#include <QList>
 #include <QSet>
 #include <QSharedPointer>
 #include <QVector>
@@ -57,7 +58,12 @@
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolarc.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolcubicbezier.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolspline.h"
+#include "../../libs/vtools/tools/pattern_piece_tool.h"
 #include "../../libs/vtools/tools/vabstracttool.h"
+#include "../../libs/vpatterndb/vpiece.h"
+#include "../../libs/vpatterndb/vpiecenode.h"
+#include "../../libs/vpatterndb/vpiecepath.h"
+#include "../../libs/vtools/undocommands/deletepiece.h"
 #include "../../libs/vtools/undocommands/deltool.h"
 #include "../../libs/vtools/undocommands/savetooloptions.h"
 #include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/vtoollineintersect.h"
@@ -1527,6 +1533,345 @@ McpToolResult PatternEditor::addArc(const QJsonObject &arguments)
                              result);
 }
 
+namespace
+{
+/// VAbstractTool::PrepareNodes() is protected static; a derived struct that is never instantiated may expose it.
+struct ToolAccess : VAbstractTool
+{
+    using VAbstractTool::PrepareNodes;
+};
+
+/// Piece node type for a draft object, or Tool::LAST_ONE_DO_NOT_USE if the object cannot be part of a piece outline.
+Tool nodeTypeFor(GOType type)
+{
+    switch (type)
+    {
+        case GOType::Point:           return Tool::NodePoint;
+        case GOType::Arc:             return Tool::NodeArc;
+        case GOType::EllipticalArc:   return Tool::NodeElArc;
+        case GOType::Spline:
+        case GOType::CubicBezier:     return Tool::NodeSpline;
+        case GOType::SplinePath:
+        case GOType::CubicBezierPath: return Tool::NodeSplinePath;
+        default:                      return Tool::LAST_ONE_DO_NOT_USE;
+    }
+}
+
+double polygonArea(const QVector<QPointF> &points)
+{
+    double twice = 0;
+    for (int i = 0; i < points.size(); ++i)
+    {
+        const QPointF &a = points.at(i);
+        const QPointF &b = points.at((i + 1) % points.size());
+        twice += a.x() * b.y() - b.x() * a.y();
+    }
+    return qAbs(twice) / 2.0;
+}
+
+double polygonPerimeter(const QVector<QPointF> &points)
+{
+    double length = 0;
+    for (int i = 0; i < points.size(); ++i)
+    {
+        length += QLineF(points.at(i), points.at((i + 1) % points.size())).length();
+    }
+    return length;
+}
+
+QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
+{
+    const QVector<QPointF> outline = piece.mainPathPoints(data);
+    const double unitFactor = qApp->fromPixel(1.0);
+    return QJsonObject{{QStringLiteral("id"), static_cast<qint64>(id)},
+                       {QStringLiteral("name"), piece.GetName()},
+                       {QStringLiteral("nodes"), piece.GetPath().nodeCount()},
+                       {QStringLiteral("seamAllowance"), piece.hasSeamAllowance()},
+                       {QStringLiteral("seamAllowanceWidth"), round3(piece.GetSAWidth())},
+                       {QStringLiteral("area"), round3(polygonArea(outline) * unitFactor * unitFactor)},
+                       {QStringLiteral("perimeter"), round3(polygonPerimeter(outline) * unitFactor)}};
+}
+} // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::addPiece(const QJsonObject &arguments)
+{
+    const Context ctx = currentContext();
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (!ctx.valid())
+    {
+        return McpToolResult::error(ctx.error);
+    }
+    if (window == nullptr || window->mcpPieceScene() == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+
+    const QString name = stringArg(arguments, "name");
+    if (name.isEmpty())
+    {
+        return McpToolResult::error(QStringLiteral("'name' is required (e.g. \"Front\")."));
+    }
+    const QHash<quint32, VPiece> *pieces = ctx.data->DataPieces();
+    for (auto it = pieces->constBegin(); it != pieces->constEnd(); ++it)
+    {
+        if (it.value().GetName() == name)
+        {
+            return McpToolResult::error(QStringLiteral("A piece named \"%1\" already exists.").arg(name));
+        }
+    }
+
+    const QJsonValue nodesValue = arguments.value(QStringLiteral("nodes"));
+    if (!nodesValue.isArray() || nodesValue.toArray().size() < 3)
+    {
+        return McpToolResult::error(QStringLiteral("'nodes' must be an array with at least 3 entries: the ids of the "
+                                                   "points (and curves/arcs between them) along the outline, in "
+                                                   "order, e.g. [1,2,5,3]. Each entry is an id or {\"id\":..., "
+                                                   "\"reverse\":true|false}."));
+    }
+
+    // --- validate the outline before touching the pattern ---------------------------------------------------------
+    QVector<VPieceNode> nodes;
+    QSet<quint32> used;
+    const QJsonArray entries = nodesValue.toArray();
+    int pointNodes = 0;
+    for (int i = 0; i < entries.size(); ++i)
+    {
+        const QJsonValue entry = entries.at(i);
+        const QJsonValue idValue = entry.isObject() ? entry.toObject().value(QStringLiteral("id")) : entry;
+        if (!idValue.isDouble() || idValue.toDouble() < 1 || idValue.toDouble() != qFloor(idValue.toDouble()))
+        {
+            return McpToolResult::error(QStringLiteral("nodes[%1] must be an object id (see list_objects).").arg(i));
+        }
+        const quint32 id = static_cast<quint32>(idValue.toDouble());
+        if (used.contains(id))
+        {
+            return McpToolResult::error(QStringLiteral("Object %1 appears twice in 'nodes'.").arg(id));
+        }
+        used.insert(id);
+
+        Tool type = Tool::LAST_ONE_DO_NOT_USE;
+        try
+        {
+            const QSharedPointer<VGObject> object = ctx.data->GetGObject(id);
+            type = object.isNull() ? Tool::LAST_ONE_DO_NOT_USE : nodeTypeFor(object->getType());
+        }
+        catch (const VException &)
+        {
+            return McpToolResult::error(QStringLiteral("nodes[%1] = %2 does not exist in the active draft block (see "
+                                                       "list_objects).").arg(i).arg(id));
+        }
+        if (type == Tool::LAST_ONE_DO_NOT_USE)
+        {
+            return McpToolResult::error(QStringLiteral("nodes[%1] = %2 cannot be part of an outline (use points, "
+                                                       "curves and arcs; straight edges between consecutive points "
+                                                       "need no entry).").arg(i).arg(id));
+        }
+        if (type == Tool::NodePoint)
+        {
+            ++pointNodes;
+        }
+        nodes.append(VPieceNode(id, type, entry.isObject() && entry.toObject().value(QStringLiteral("reverse"))
+                                                                .toBool(false)));
+    }
+    if (pointNodes < 2)
+    {
+        return McpToolResult::error(QStringLiteral("The outline needs at least 2 points."));
+    }
+
+    // Curves and arcs are drawn from one end to the other: flip them when they run against the outline direction.
+    for (int i = 0; i < nodes.size(); ++i)
+    {
+        if (nodes.at(i).GetTypeTool() == Tool::NodePoint
+            || entries.at(i).isObject() && entries.at(i).toObject().contains(QStringLiteral("reverse")))
+        {
+            continue;
+        }
+        const VPieceNode &previous = nodes.at((i + nodes.size() - 1) % nodes.size());
+        if (previous.GetTypeTool() != Tool::NodePoint)
+        {
+            continue;
+        }
+        const QSharedPointer<VAbstractCurve> curve = ctx.data->GeometricObject<VAbstractCurve>(nodes.at(i).GetId());
+        const QPointF from = static_cast<QPointF>(*ctx.data->GeometricObject<VPointF>(previous.GetId()));
+        nodes[i].SetReverse(QLineF(from, curve->getLastPoint()).length() < QLineF(from, curve->getFirstPoint()).length());
+    }
+
+    // seam allowance
+    bool seamAllowance = false;
+    if (arguments.contains(QStringLiteral("seam_allowance")))
+    {
+        seamAllowance = arguments.value(QStringLiteral("seam_allowance")).toBool(false);
+    }
+    QString width = stringArg(arguments, "seam_allowance_width");
+    double widthValue = 0;
+    if (arguments.value(QStringLiteral("seam_allowance_width")).isDouble())
+    {
+        width = QString::number(arguments.value(QStringLiteral("seam_allowance_width")).toDouble());
+    }
+    if (width.isEmpty())
+    {
+        // Same default as the Piece tool dialog: the default seam allowance of the preferences, in the pattern unit.
+        widthValue = UnitConvertor(qApp->Settings()->GetDefaultSeamAllowance(), StrToUnits(qApp->Settings()->getUnit()),
+                                   qApp->patternUnit());
+        width = QString::number(widthValue);
+    }
+    else
+    {
+        QString error;
+        if (!checkFormula(*ctx.data->DataVariables(), QStringLiteral("seam_allowance_width"), width, widthValue,
+                          error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (widthValue < 0)
+        {
+            return McpToolResult::error(QStringLiteral("'seam_allowance_width' must not be negative."));
+        }
+    }
+
+    VPiece piece;
+    piece.GetPath().setNodes(nodes);
+    piece.SetName(name);
+    piece.SetSeamAllowance(seamAllowance);
+    piece.setColor(ColorBlack);
+    piece.setFill(FillNone);
+    piece.setInLayout(true);
+    piece.setSeamAllowanceWidthFormula(width, widthValue);
+
+    // The outline must enclose an area; reject collinear or degenerate input before anything is created.
+    const QVector<QPointF> outline = piece.mainPathPoints(ctx.data);
+    if (outline.size() < 3 || polygonArea(outline) < 1e-6)
+    {
+        return McpToolResult::error(QStringLiteral("The outline does not enclose an area (points on one line or in "
+                                                   "the wrong order?). Check the node order with list_objects."));
+    }
+
+    // --- create the piece like the Piece tool dialog does ---------------------------------------------------------
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(QObject::tr("Claude: add piece %1").arg(name));   // PatternPieceTool ends this macro itself
+    PatternPieceTool *tool = nullptr;
+    try
+    {
+        piece.GetPath().setNodes(ToolAccess::PrepareNodes(piece.GetPath(), window->mcpPieceScene(), ctx.doc, ctx.data));
+        tool = PatternPieceTool::Create(0, piece, width, window->mcpPieceScene(), ctx.doc, ctx.data,
+                                        Document::FullParse, Source::FromGui);
+        if (tool != nullptr)
+        {
+            tool->RefreshGeometry();
+        }
+    }
+    catch (const VException &e)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("Could not create the piece: %1").arg(e.ErrorMessage()));
+    }
+    if (tool == nullptr)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("The piece could not be created."));
+    }
+    window->mcpPiecesChanged();
+
+    const quint32 id = tool->getId();
+    const QJsonObject result = pieceJson(ctx.data, id, ctx.data->GetPiece(id));
+    return McpToolResult::ok(QStringLiteral("Added piece \"%1\" (id %2): area %3 %4^2, perimeter %5 %4. Use show_mode "
+                                            "\"piece\" to see it. Undo removes it.")
+                                 .arg(name).arg(id).arg(result.value(QStringLiteral("area")).toDouble())
+                                 .arg(UnitsToStr(qApp->patternUnit()))
+                                 .arg(result.value(QStringLiteral("perimeter")).toDouble()),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::listPieces(const QJsonObject &arguments)
+{
+    Q_UNUSED(arguments)
+    VContainer *data = qApp->getCurrentData();
+    if (data == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("No pattern is open in Seamly2D."));
+    }
+    QJsonArray list;
+    const QHash<quint32, VPiece> *pieces = data->DataPieces();
+    QList<quint32> ids = pieces->keys();
+    std::sort(ids.begin(), ids.end());
+    for (quint32 id : ids)
+    {
+        list.append(pieceJson(data, id, pieces->value(id)));
+    }
+    return McpToolResult::ok(QStringLiteral("%1 piece(s) (unit: %2).").arg(list.size())
+                                 .arg(UnitsToStr(qApp->patternUnit())),
+                             QJsonObject{{QStringLiteral("unit"), UnitsToStr(qApp->patternUnit())},
+                                         {QStringLiteral("pieces"), list}});
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::deletePiece(const QJsonObject &arguments)
+{
+    VContainer *data = qApp->getCurrentData();
+    if (data == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("No pattern is open in Seamly2D."));
+    }
+    const QJsonValue idValue = arguments.value(QStringLiteral("id"));
+    if (!idValue.isDouble() || idValue.toDouble() < 1 || idValue.toDouble() != qFloor(idValue.toDouble()))
+    {
+        return McpToolResult::error(QStringLiteral("'id' is required: the id of the piece (see list_pieces)."));
+    }
+    const quint32 id = static_cast<quint32>(idValue.toDouble());
+    if (!data->DataPieces()->contains(id))
+    {
+        return McpToolResult::error(QStringLiteral("There is no piece with id %1 (see list_pieces).").arg(id));
+    }
+    const QString name = data->GetPiece(id).GetName();
+    PatternPieceTool *tool = qobject_cast<PatternPieceTool *>(VAbstractPattern::getTool(id));
+    if (tool == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The piece %1 cannot be deleted with this tool.").arg(id));
+    }
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(QObject::tr("Claude: delete piece %1").arg(name));
+    tool->Remove(false);   // no confirmation; throws internally and is handled inside Remove()
+    // Remove(false) only schedules the re-parse when it asks for confirmation; without it the piece would stay in the
+    // program's data until the next full parse. Trigger it like the confirmed path does.
+    VAbstractPattern *doc = qApp->getCurrentDocument();
+    emit doc->NeedFullParsing();
+    stack->endMacro();
+    // The same applies to Undo/Redo of that command: connect its re-parse request, which the tool left unconnected.
+    if (stack->index() > 0)
+    {
+        const QUndoCommand *macro = stack->command(stack->index() - 1);
+        for (int i = 0; macro != nullptr && i < macro->childCount(); ++i)
+        {
+            DeletePiece *del = const_cast<DeletePiece *>(dynamic_cast<const DeletePiece *>(macro->child(i)));
+            if (del != nullptr)
+            {
+                QObject::connect(del, &DeletePiece::NeedFullParsing, doc, &VAbstractPattern::NeedFullParsing);
+            }
+        }
+    }
+    return McpToolResult::ok(QStringLiteral("Deleted piece \"%1\". Undo restores it.").arg(name),
+                             QJsonObject{{QStringLiteral("id"), static_cast<qint64>(id)}});
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::showMode(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    QString error;
+    const QString mode = stringArg(arguments, "mode");
+    if (!window->mcpShowMode(mode, error))
+    {
+        return McpToolResult::error(error);
+    }
+    return McpToolResult::ok(QStringLiteral("The window now shows the %1 view.").arg(mode));
+}
+
 //---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::addDraftBlock(const QJsonObject &arguments)
 {
@@ -1737,6 +2082,103 @@ McpTool PatternEditor::addArcTool()
                                     QJsonArray{QStringLiteral("center_point_id"), QStringLiteral("radius"),
                                                QStringLiteral("start_angle"), QStringLiteral("end_angle")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addArc(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::addPieceTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("add_piece");
+    tool.description =
+        QStringLiteral("Creates a pattern piece from the outline of the active draft block: the piece is what gets "
+                       "laid out, graded and exported. 'nodes' lists the ids of the outline's points in order "
+                       "(clockwise is the convention), and between two points the id of a curve or arc if the edge "
+                       "between them is curved; a straight edge needs no entry. The outline is closed "
+                       "automatically. Curves are flipped to run along the outline direction unless you give "
+                       "{\"id\":..., \"reverse\":true|false}. Optionally add a seam allowance. The result reports "
+                       "the piece's area and perimeter so that you can check it. One Undo step. Refused if the "
+                       "outline encloses no area, an id is unknown or repeated, or the name is taken.");
+    QJsonObject nodeItem{{QStringLiteral("oneOf"),
+                          QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}},
+                                     QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                                 {QStringLiteral("properties"),
+                                                  QJsonObject{{QStringLiteral("id"),
+                                                               QJsonObject{{QStringLiteral("type"),
+                                                                            QStringLiteral("integer")}}},
+                                                              {QStringLiteral("reverse"),
+                                                               QJsonObject{{QStringLiteral("type"),
+                                                                            QStringLiteral("boolean")}}}}},
+                                                 {QStringLiteral("required"), QJsonArray{QStringLiteral("id")}}}}}};
+    QJsonObject properties;
+    properties.insert(QStringLiteral("name"), stringProperty(QStringLiteral("Piece name, unique. Example: \"Front\".")));
+    properties.insert(QStringLiteral("nodes"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("array")},
+                                  {QStringLiteral("minItems"), 3},
+                                  {QStringLiteral("items"), nodeItem},
+                                  {QStringLiteral("description"),
+                                   QStringLiteral("Ids along the outline: points, and curves/arcs between points.")}});
+    properties.insert(QStringLiteral("seam_allowance"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")},
+                                  {QStringLiteral("description"),
+                                   QStringLiteral("Add a seam allowance around the outline (default false).")}});
+    properties.insert(QStringLiteral("seam_allowance_width"),
+                      stringProperty(QStringLiteral("Seam allowance width, number or formula in the pattern unit; "
+                                                    "defaults to the program's default seam allowance.")));
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("name"),
+                                                                           QStringLiteral("nodes")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addPiece(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::listPiecesTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("list_pieces");
+    tool.description = QStringLiteral("Lists the pattern pieces of the whole pattern with id, name, number of outline "
+                                      "nodes, seam allowance, area and perimeter (pattern unit).");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), QJsonObject()}};
+    tool.readOnly = true;
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::listPieces(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::deletePieceTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("delete_piece");
+    tool.description = QStringLiteral("Deletes a pattern piece (not the drawing it was made from). One Undo step.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("id"),
+                                                 idProperty(QStringLiteral("Piece id from list_pieces."))}}},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("id")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::deletePiece(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::showModeTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("show_mode");
+    tool.description = QStringLiteral("Switches what the Seamly2D window shows: \"draft\" (the construction drawing) "
+                                      "or \"piece\" (the pattern pieces; needs at least one piece). Does not change "
+                                      "the pattern.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("mode"),
+                                                 QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                                             {QStringLiteral("enum"),
+                                                              QJsonArray{QStringLiteral("draft"),
+                                                                         QStringLiteral("piece")}}}}}},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("mode")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::showMode(arguments); };
     return tool;
 }
 
