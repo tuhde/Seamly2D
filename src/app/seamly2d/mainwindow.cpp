@@ -7568,9 +7568,11 @@ QJsonObject MainWindow::mcpAttachMeasurements(const QString &path, QString &erro
         error = QStringLiteral("'path' must be the absolute path of an existing measurement file.");
         return QJsonObject();
     }
-    if (info.suffix() != smisExt && info.suffix() != vitExt)
+    static const QStringList measurementSuffixes{smisExt, vitExt, smmsExt, vstExt};
+    if (!measurementSuffixes.contains(info.suffix()))
     {
-        error = QStringLiteral("Only individual measurement files (.%1) can be attached here.").arg(smisExt);
+        error = QStringLiteral("Only measurement files (.%1 individual, .%2 multisize) can be attached here.")
+                    .arg(smisExt, smmsExt);
         return QJsonObject();
     }
     const QString file = QDir::cleanPath(info.absoluteFilePath());
@@ -7583,10 +7585,11 @@ QJsonObject MainWindow::mcpAttachMeasurements(const QString &path, QString &erro
         error = QStringLiteral("\"%1\" is not a readable measurement file.").arg(file);
         return QJsonObject();
     }
-    if (xml.documentElement().tagName() != QLatin1String("smis") && xml.documentElement().tagName() != QLatin1String("vit"))
+    static const QStringList rootTags{MeasurementDoc::TagSMIS, MeasurementDoc::TagVIT, MeasurementDoc::TagSMMS,
+                                      MeasurementDoc::TagVST};
+    if (!rootTags.contains(xml.documentElement().tagName()))
     {
-        error = QStringLiteral("\"%1\" is not an individual measurement file (multisize tables are not supported "
-                               "here).").arg(file);
+        error = QStringLiteral("\"%1\" is not a measurement file.").arg(file);
         return QJsonObject();
     }
     QSet<QString> available;
@@ -7641,9 +7644,77 @@ QJsonObject MainWindow::mcpAttachMeasurements(const QString &path, QString &erro
     doc->LiteParseTree(Document::LiteParse);
     updateWindowTitle();
 
-    return QJsonObject{{QStringLiteral("path"), file},
+    QJsonObject result{{QStringLiteral("path"), file},
                        {QStringLiteral("unit"), UnitsToStr(m_measurements->measurementUnits())},
                        {QStringLiteral("measurements"), available.size()}};
+    const QJsonObject gradation = mcpGradation();
+    for (auto it = gradation.constBegin(); it != gradation.constEnd(); ++it)
+    {
+        result.insert(it.key(), it.value());
+    }
+    return result;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpGradation() const
+{
+    QJsonObject result{{QStringLiteral("measurementsType"),
+                        qApp->patternType() == MeasurementsType::Multisize ? QStringLiteral("multisize")
+                                                                           : QStringLiteral("individual")}};
+    auto items = [](const QComboBox *box)
+    {
+        QJsonArray list;
+        for (int i = 0; box != nullptr && i < box->count(); ++i)
+        {
+            list.append(box->itemText(i));
+        }
+        return list;
+    };
+    if (qApp->patternType() == MeasurementsType::Multisize && !gradationSizes.isNull() && !gradationHeights.isNull())
+    {
+        result.insert(QStringLiteral("size"), gradationSizes->currentText());
+        result.insert(QStringLiteral("height"), gradationHeights->currentText());
+        result.insert(QStringLiteral("sizes"), items(gradationSizes));
+        result.insert(QStringLiteral("heights"), items(gradationHeights));
+    }
+    return result;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpSetGradation(const QString &size, const QString &height, QString &error)
+{
+    if (qApp->patternType() != MeasurementsType::Multisize || gradationSizes.isNull() || gradationHeights.isNull())
+    {
+        error = QStringLiteral("The pattern does not use a multisize measurement table; set_size only applies to "
+                               "those (attach one with attach_measurements).");
+        return QJsonObject();
+    }
+    // Check both values before changing either, so a bad value changes nothing. Numbers like "50" match "50".
+    int sizeIndex = -1;
+    int heightIndex = -1;
+    if (!size.isEmpty() && (sizeIndex = gradationSizes->findText(size)) < 0)
+    {
+        error = QStringLiteral("Size \"%1\" is not in the table. Available: %2.")
+                    .arg(size, QStringList(mcpGradation().value(QStringLiteral("sizes")).toVariant().toStringList())
+                                   .join(QStringLiteral(", ")));
+        return QJsonObject();
+    }
+    if (!height.isEmpty() && (heightIndex = gradationHeights->findText(height)) < 0)
+    {
+        error = QStringLiteral("Height \"%1\" is not in the table. Available: %2.")
+                    .arg(height, QStringList(mcpGradation().value(QStringLiteral("heights")).toVariant().toStringList())
+                                     .join(QStringLiteral(", ")));
+        return QJsonObject();
+    }
+    if (sizeIndex >= 0)
+    {
+        gradationSizes->setCurrentIndex(sizeIndex);     // runs ChangedSize like the toolbar does
+    }
+    if (heightIndex >= 0)
+    {
+        gradationHeights->setCurrentIndex(heightIndex);
+    }
+    return mcpGradation();
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -7851,6 +7922,8 @@ QJsonObject MainWindow::mcpPatternInfo() const
                        {QStringLiteral("activeDraftBlock"), doc->getActiveDraftBlockName()},
                        {QStringLiteral("draftBlocks"), blocks},
                        {QStringLiteral("measurementFile"), doc->MPath()},
+                       {QStringLiteral("measurementsType"), qApp->patternType() == MeasurementsType::Multisize
+                                                                ? QStringLiteral("multisize") : QStringLiteral("individual")},
                        {QStringLiteral("geometricObjects"), pattern->DataGObjects()->size()}};
 }
 

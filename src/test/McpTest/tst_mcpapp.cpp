@@ -239,7 +239,7 @@ void TST_McpApp::toolsAreListed()
     const QStringList expected{
         "get_pattern_info", "list_objects", "add_draft_block", "add_point", "add_line", "add_curve", "add_arc", "add_elliptical_arc",
         "update_object", "delete_object", "list_variables", "set_variable", "delete_variable", "add_piece",
-        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "add_anchor_point", "add_internal_path", "set_label", "set_corner", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
+        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "add_anchor_point", "add_internal_path", "set_label", "set_corner", "set_size", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
         "export_layout"};
     for (const QString &name : expected)
     {
@@ -1267,3 +1267,58 @@ void TST_McpApp::measurementFileCanBeCreatedAndAttached()
     ok(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("waist_circ")}, {QStringLiteral("value"), 88}}));
     QVERIFY(qAbs(point(QStringLiteral("B")).value(QStringLiteral("x")).toDouble() - (baseX + 22)) < 0.01);
 }
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::multisizeTableFollowsSizeAndHeight()
+{
+    const QString folder = m_workDir.path() + QLatin1String("/multisize");
+    QVERIFY(QDir().mkpath(folder));
+    const QString table = folder + QLatin1String("/gost.smms");
+    QVERIFY(QFile::copy(QString::fromUtf8(SRCDIR) + QLatin1String("../CollectionTest/tst_seamlyme/gost_man_ru.smms"), table));
+
+    stopApp();
+    QVERIFY(startApp());
+    ok(QStringLiteral("add_draft_block"), obj({{QStringLiteral("unit"), QStringLiteral("cm")}}));
+    QVERIFY(fails(QStringLiteral("set_size"), obj({{QStringLiteral("size"), QStringLiteral("50")}})).contains(QStringLiteral("multisize")));
+
+    const QJsonObject attached = ok(QStringLiteral("attach_measurements"), obj({{QStringLiteral("path"), table}}));
+    QCOMPARE(attached.value(QStringLiteral("measurementsType")).toString(), QStringLiteral("multisize"));
+    QCOMPARE(ok(QStringLiteral("get_pattern_info")).value(QStringLiteral("measurementsType")).toString(), QStringLiteral("multisize"));
+    QVERIFY(fails(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("armscye_width")}, {QStringLiteral("value"), 1}}))
+                .length() > 0);
+
+    auto value = [this](const QString &name)
+    {
+        for (const QJsonValue &m : ok(QStringLiteral("list_variables")).value(QStringLiteral("measurements")).toArray())
+        {
+            if (m.toObject().value(QStringLiteral("name")).toString() == name)
+            {
+                return m.toObject().value(QStringLiteral("value")).toDouble(-1);
+            }
+        }
+        return -1.0;
+    };
+    const QJsonObject current = ok(QStringLiteral("set_size"));
+    const QJsonArray sizes = current.value(QStringLiteral("sizes")).toArray();
+    QVERIFY(sizes.size() > 1);
+    const QString oldSize = current.value(QStringLiteral("size")).toString();
+    QString other;
+    for (const QJsonValue &candidate : sizes)
+    {
+        if (candidate.toString() != oldSize)
+        {
+            other = candidate.toString();
+            break;
+        }
+    }
+    const double before = value(QStringLiteral("armscye_width"));
+    QVERIFY(before > 0);
+
+    QVERIFY(fails(QStringLiteral("set_size"), obj({{QStringLiteral("size"), QStringLiteral("9999")}})).contains(QStringLiteral("not in the table")));
+    QCOMPARE(ok(QStringLiteral("set_size")).value(QStringLiteral("size")).toString(), oldSize);   // unchanged
+    QCOMPARE(ok(QStringLiteral("set_size"), obj({{QStringLiteral("size"), other}})).value(QStringLiteral("size")).toString(), other);
+    QVERIFY(qAbs(value(QStringLiteral("armscye_width")) - before) > 0.001);   // the measurement follows the size
+    ok(QStringLiteral("set_size"), obj({{QStringLiteral("size"), oldSize}}));
+    QVERIFY(qAbs(value(QStringLiteral("armscye_width")) - before) < 0.001);
+}
+

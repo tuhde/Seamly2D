@@ -76,6 +76,7 @@ public:
     static McpToolResult addAnchorPoint(const QJsonObject &arguments);
     static McpToolResult addInternalPath(const QJsonObject &arguments);
     static McpToolResult setLabel(const QJsonObject &arguments);
+    static McpToolResult setSize(const QJsonObject &arguments);
     static McpToolResult setCorner(const QJsonObject &arguments);
     static McpToolResult addEllipticalArc(const QJsonObject &arguments);
 
@@ -139,6 +140,7 @@ public:
     static McpTool addAnchorPointTool();
     static McpTool addInternalPathTool();
     static McpTool setLabelTool();
+    static McpTool setSizeTool();
     static McpTool setCornerTool();
     static McpTool addEllipticalArcTool();
     static McpTool listVariablesTool();

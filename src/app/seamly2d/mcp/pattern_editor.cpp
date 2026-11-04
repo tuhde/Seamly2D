@@ -4057,6 +4057,66 @@ McpTool PatternEditor::setCornerTool()
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::setSize(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    auto text = [&arguments](const char *key)
+    {
+        const QJsonValue v = arguments.value(QLatin1String(key));
+        return v.isDouble() ? QString::number(v.toDouble()) : v.toString().trimmed();
+    };
+    QString error;
+    const QString size = text("size");
+    const QString height = text("height");
+    QJsonObject result;
+    if (size.isEmpty() && height.isEmpty())
+    {
+        result = window->mcpGradation();   // only look
+        if (!result.contains(QStringLiteral("size")))
+        {
+            return McpToolResult::error(QStringLiteral("The pattern does not use a multisize measurement table."));
+        }
+    }
+    else
+    {
+        result = window->mcpSetGradation(size, height, error);
+        if (!error.isEmpty())
+        {
+            return McpToolResult::error(error);
+        }
+    }
+    return McpToolResult::ok(QStringLiteral("Size %1, height %2. Sizes: %3. Heights: %4.")
+                                 .arg(result.value(QStringLiteral("size")).toString(),
+                                      result.value(QStringLiteral("height")).toString(),
+                                      result.value(QStringLiteral("sizes")).toVariant().toStringList().join(QStringLiteral(", ")),
+                                      result.value(QStringLiteral("heights")).toVariant().toStringList().join(QStringLiteral(", "))),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::setSizeTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("set_size");
+    tool.description =
+        QStringLiteral("Multisize patterns only (a table attached with attach_measurements): chooses the size and/or "
+                       "height the pattern is calculated for, like the Size and Height boxes of the status bar. The "
+                       "values must be offered by the table (the error lists them). Without arguments it just reports "
+                       "the current size, height and the available values. The measurements, formulas and drawing "
+                       "follow; it is not an undo step.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("size"), stringProperty(QStringLiteral("Size, e.g. \"50\"."))},
+                                                {QStringLiteral("height"), stringProperty(QStringLiteral("Height, e.g. \"176\"."))}}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setSize(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::setNotch(const QJsonObject &arguments)
 {
     PieceRef ref;
@@ -5097,8 +5157,10 @@ McpTool PatternEditor::attachMeasurementsTool()
     McpTool tool;
     tool.name = QStringLiteral("attach_measurements");
     tool.description =
-        QStringLiteral("Makes the open pattern use an individual measurement file (Measurements > Load Individual): "
-                       "the file's measurements become available in formulas, and set_measurement can change them. "
+        QStringLiteral("Makes the open pattern use a measurement file (Measurements > Load Individual or Load "
+                       "Multisize): the file's measurements become available in formulas. An individual file "
+                       "(.smis) can then be changed with set_measurement; a multisize table (.smms/.vst) is "
+                       "calculated for a size and height chosen with set_size. "
                        "Needs a draft block; refused if the pattern already uses measurements that the file does not "
                        "contain. Seamly2D asks the user to confirm the file. Not on the undo stack; attach another "
                        "file to change it. Use create_measurements to make a file first.");

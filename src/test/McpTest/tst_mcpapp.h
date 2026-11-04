@@ -61,6 +61,7 @@ private slots:
     void screenshotReturnsAPng();
     void measurementValuesCanBeChanged();
     void measurementFileCanBeCreatedAndAttached();
+    void multisizeTableFollowsSizeAndHeight();
 
 private:
     bool        startApp();

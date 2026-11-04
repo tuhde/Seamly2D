@@ -143,6 +143,9 @@ public:
     /// Links an individual measurement file to the open pattern for the MCP tool `attach_measurements`, like
     /// Measurements > Load Individual. The user is asked to confirm.
     QJsonObject mcpAttachMeasurements(const QString &path, QString &error);
+    /// Size and height of a multisize pattern (and the values the table offers), for `set_size`.
+    QJsonObject mcpGradation() const;
+    QJsonObject mcpSetGradation(const QString &size, const QString &height, QString &error);
     /// Undo / redo for the MCP tools; returns the text of the step that was undone / redone (empty if none).
     QString mcpUndo(bool undo);
 

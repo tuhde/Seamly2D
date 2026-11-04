@@ -62,7 +62,7 @@ Claude learns the tools from the server itself (names, parameters, units, conven
 | Look | `get_pattern_info`, `list_objects` (filters: element, type, name, ids), `list_variables`, `list_pieces`, `screenshot` (drawing or window), `show_mode`, `fit_view` (everything, the active draft block, or one piece) |
 | Draw | `add_draft_block` (also sets the unit), `add_point` (endLine, alongLine, normal, bisector, lineIntersect, height, lineIntersectAxis, curveIntersectAxis, cutCurve, shoulder, triangle, intersectXY, intersectCircles, intersectCircleLine, tangentToCircle, intersectArcs, tangentToArc, intersectCurves), `add_line`, `add_curve` (spline, cubicBezier, path through three or more points), `add_arc`, `add_elliptical_arc` |
 | Change | `update_object` (name, formulas, circle/arc/curve intersection points, referenced points and curves, cut direction, position of the base point), `delete_object`, `set_variable`, `delete_variable`, `set_measurement` (a value in the measurement file), `create_measurements`, `attach_measurements`, `undo`, `redo` |
-| Pieces | `add_piece` (outline from point and curve ids, optional seam allowance), `update_piece` (quantity, fold, label letter and annotation, seam allowance, name), `set_grainline`, `set_notch`, `add_anchor_point`, `add_internal_path`, `set_label`, `set_corner` (types, count, size; also removes), `delete_piece` |
+| Pieces | `add_piece` (outline from point and curve ids, optional seam allowance), `update_piece` (quantity, fold, label letter and annotation, seam allowance, name), `set_grainline`, `set_notch`, `add_anchor_point`, `add_internal_path`, `set_label`, `set_size`, `set_corner` (types, count, size; also removes), `delete_piece` |
 | Files | `save_pattern`, `open_pattern`, `export_layout` (pdf, svg, png, jpg, tif, eps, ps, dxf; arranged on pages or one file per piece) |
 
 Things worth knowing:
@@ -74,6 +74,7 @@ Things worth knowing:
   page, ...) is refused before anything changes, with a message Claude can read and correct.
 - `open_pattern` only works while the window is empty. Opening a file into a window that already holds a pattern
   would start another Seamly2D window that this connection cannot control.
+- Multisize tables (.smms/.vst): `attach_measurements` accepts them; `set_size(size?, height?)` picks the size and height the pattern is calculated for (like the status bar boxes) and lists the available values; `get_pattern_info` reports `measurementsType`.
 - Measurement files: `list_standard_measurements` finds the standard names (searchable), `create_measurements(path, values, unit?)` writes a new individual `.smis` file (never overwrites; custom names are written `@name`), `attach_measurements(path)` makes the pattern use it (needs a draft block; refused if the pattern uses measurements the file lacks; not undoable). Seamly2D asks the user to confirm both file accesses.
 - Measurements: `set_measurement` changes a value in the measurement file of the pattern (individual files only, in
   the pattern unit). The file belongs to the person and is shared by every pattern that uses it, so you are asked to
