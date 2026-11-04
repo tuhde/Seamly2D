@@ -41,7 +41,7 @@ const char *const kInstructions =
     "Seamly2D is a pattern-making application. This server controls the pattern that is open in the running "
     "Seamly2D window. Every change appears on the canvas at once and can be undone with Undo.\n"
     "Work like this: first read the current state (get_pattern_info, list_objects). If the pattern has no draft block "
-    "yet, create one with add_draft_block (it also sets the unit). Then change the pattern (add_point, add_line) and "
+    "yet, create one with add_draft_block (it also sets the unit). Then change the pattern (add_point, add_line, add_curve, add_arc) and "
     "check the result with list_objects. Points refer to earlier points by their id. Call fit_view after drawing so "
     "that the user sees the whole drawing.";
 }
@@ -198,6 +198,8 @@ void McpIntegration::registerTools()
     m_registry.registerTool(PatternEditor::listObjectsTool());
     m_registry.registerTool(PatternEditor::addPointTool());
     m_registry.registerTool(PatternEditor::addLineTool());
+    m_registry.registerTool(PatternEditor::addCurveTool());
+    m_registry.registerTool(PatternEditor::addArcTool());
     m_registry.registerTool(PatternEditor::listVariablesTool());
     m_registry.registerTool(PatternEditor::setVariableTool());
     m_registry.registerTool(PatternEditor::deleteVariableTool());

@@ -63,12 +63,18 @@ public:
     static McpToolResult setVariable(const QJsonObject &arguments);
     static McpToolResult deleteVariable(const QJsonObject &arguments);
 
+    /// Tools `add_curve` (spline, cubicBezier) and `add_arc`: curves between existing points, one undo step each.
+    static McpToolResult addCurve(const QJsonObject &arguments);
+    static McpToolResult addArc(const QJsonObject &arguments);
+
     /// Tool `add_draft_block`: creates a draft block with its base point (for the first block also sets the unit).
     static McpToolResult addDraftBlock(const QJsonObject &arguments);
 
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool addCurveTool();
+    static McpTool addArcTool();
     static McpTool listVariablesTool();
     static McpTool setVariableTool();
     static McpTool deleteVariableTool();

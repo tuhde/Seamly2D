@@ -45,6 +45,8 @@
 #include "../../libs/ifc/ifcdef.h"
 #include "../../libs/ifc/xml/vabstractpattern.h"
 #include "../../libs/qmuparser/qmuparsererror.h"
+#include "../../libs/vgeometry/vabstractcurve.h"
+#include "../../libs/vgeometry/vcubicbezier.h"
 #include "../../libs/vgeometry/vpointf.h"
 #include "../../libs/vpatterndb/calculator.h"
 #include "../../libs/vpatterndb/vcontainer.h"
@@ -52,6 +54,9 @@
 #include "../../libs/vpatterndb/variables/custom_variable.h"
 #include "../../libs/vpatterndb/variables/vlinelength.h"
 #include "../../libs/vtools/tools/drawTools/vtoolline.h"
+#include "../../libs/vtools/tools/drawTools/toolcurve/vtoolarc.h"
+#include "../../libs/vtools/tools/drawTools/toolcurve/vtoolcubicbezier.h"
+#include "../../libs/vtools/tools/drawTools/toolcurve/vtoolspline.h"
 #include "../../libs/vtools/tools/vabstracttool.h"
 #include "../../libs/vtools/undocommands/deltool.h"
 #include "../../libs/vtools/undocommands/savetooloptions.h"
@@ -229,7 +234,6 @@ QJsonObject idProperty(const QString &description)
 //---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::listObjects(const QJsonObject &arguments)
 {
-    Q_UNUSED(arguments)
     const Context ctx = currentContext();
     if (!ctx.valid())
     {
@@ -242,6 +246,30 @@ McpToolResult PatternEditor::listObjects(const QJsonObject &arguments)
         return McpToolResult::error(QStringLiteral("The active draft block has no calculation section."));
     }
 
+    // Optional filters.
+    const QString elementFilter = stringArg(arguments, "element");
+    const QString typeFilter    = stringArg(arguments, "type");
+    const QString nameFilter    = stringArg(arguments, "name_contains");
+    QSet<quint32> idFilter;
+    const QJsonValue idsValue = arguments.value(QStringLiteral("ids"));
+    if (idsValue.isArray())
+    {
+        const QJsonArray ids = idsValue.toArray();
+        for (const QJsonValue &id : ids)
+        {
+            idFilter.insert(static_cast<quint32>(id.toDouble()));
+        }
+    }
+    else if (!idsValue.isUndefined() && !idsValue.isNull())
+    {
+        return McpToolResult::error(QStringLiteral("'ids' must be an array of object ids."));
+    }
+    // Presentation details (label offsets, colors, ...) do not matter for constructing; leave them out.
+    static const QStringList noise{QStringLiteral("mx"), QStringLiteral("my"), QStringLiteral("showPointName"),
+                                   QStringLiteral("showLabel"), QStringLiteral("lineColor"),
+                                   QStringLiteral("lineWeight"), QStringLiteral("penStyle"), QStringLiteral("color")};
+
+    int total = 0;
     QJsonArray objects;
     for (QDomNode node = calculation.firstChild(); !node.isNull(); node = node.nextSibling())
     {
@@ -250,8 +278,22 @@ McpToolResult PatternEditor::listObjects(const QJsonObject &arguments)
         {
             continue;
         }
+        ++total;
+        if ((!elementFilter.isEmpty() && element.tagName() != elementFilter)
+            || (!typeFilter.isEmpty() && element.attribute(AttrType) != typeFilter)
+            || (!nameFilter.isEmpty()
+                && !element.attribute(QStringLiteral("name")).contains(nameFilter, Qt::CaseInsensitive))
+            || (!idFilter.isEmpty() && !idFilter.contains(element.attribute(QStringLiteral("id")).toUInt())))
+        {
+            continue;
+        }
+        QJsonObject definition = attributesOf(element);
+        for (const QString &key : noise)
+        {
+            definition.remove(key);
+        }
         QJsonObject item{{QStringLiteral("element"), element.tagName()},
-                         {QStringLiteral("definition"), attributesOf(element)}};
+                         {QStringLiteral("definition"), definition}};
 
         bool ok = false;
         const quint32 id = element.attribute(QStringLiteral("id")).toUInt(&ok);
@@ -278,11 +320,12 @@ McpToolResult PatternEditor::listObjects(const QJsonObject &arguments)
         objects.append(item);
     }
 
-    return McpToolResult::ok(QStringLiteral("%1 object(s) in draft block \"%2\" (unit: %3; y grows downwards). "
-                                            "Use the ids as references.")
-                                 .arg(objects.size())
+    return McpToolResult::ok(QStringLiteral("%1 of %2 object(s) in draft block \"%3\" (unit: %4; y grows "
+                                            "downwards). Use the ids as references.")
+                                 .arg(objects.size()).arg(total)
                                  .arg(ctx.doc->getActiveDraftBlockName(), UnitsToStr(qApp->patternUnit())),
                              QJsonObject{{QStringLiteral("draftBlock"), ctx.doc->getActiveDraftBlockName()},
+                                         {QStringLiteral("total"), total},
                                          {QStringLiteral("unit"), UnitsToStr(qApp->patternUnit())},
                                          {QStringLiteral("objects"), objects}});
 }
@@ -1290,6 +1333,200 @@ McpToolResult PatternEditor::deleteVariable(const QJsonObject &arguments)
                              QJsonObject{{QStringLiteral("name"), name}});
 }
 
+namespace
+{
+/// Reports a freshly created curve or arc: id, name and length in the pattern unit.
+QJsonObject curveJson(VContainer *data, quint32 id, const QString &kind)
+{
+    QJsonObject result{{QStringLiteral("id"), static_cast<qint64>(id)}, {QStringLiteral("kind"), kind}};
+    const QSharedPointer<VGObject> object = data->GetGObject(id);
+    if (!object.isNull())
+    {
+        result.insert(QStringLiteral("name"), object->name());
+    }
+    const QSharedPointer<VAbstractCurve> curve = data->GeometricObject<VAbstractCurve>(id);
+    if (!curve.isNull())
+    {
+        result.insert(QStringLiteral("length"), round3(qApp->fromPixel(curve->GetLength())));
+    }
+    return result;
+}
+} // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::addCurve(const QJsonObject &arguments)
+{
+    const Context ctx = currentContext();
+    if (!ctx.valid())
+    {
+        return McpToolResult::error(ctx.error);
+    }
+
+    // "spline" is the name used in the tool description; Seamly2D stores it as "simpleInteractive".
+    QString type = stringArg(arguments, "type");
+    if (type == VToolSpline::ToolType)
+    {
+        type = QStringLiteral("spline");
+    }
+    const QStringList supported{QStringLiteral("spline"), VToolCubicBezier::ToolType};
+    if (!supported.contains(type))
+    {
+        return McpToolResult::error(QStringLiteral("Unsupported curve type \"%1\". Supported: %2.")
+                                        .arg(type, supported.join(QStringLiteral(", "))));
+    }
+
+    QString error;
+    quint32 p1 = NULL_ID;
+    quint32 p2 = NULL_ID;
+    quint32 p3 = NULL_ID;
+    quint32 p4 = NULL_ID;
+    QString angle1 = stringArg(arguments, "angle1");
+    QString angle2 = stringArg(arguments, "angle2");
+    QString length1 = stringArg(arguments, "length1");
+    QString length2 = stringArg(arguments, "length2");
+    const QHash<QString, QSharedPointer<VInternalVariable>> variables = *ctx.data->DataVariables();
+    double value = 0;
+
+    if (type == QStringLiteral("spline"))
+    {
+        if (!pointArg(ctx, arguments, "start_point_id", p1, error)
+            || !pointArg(ctx, arguments, "end_point_id", p4, error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (p1 == p4)
+        {
+            return McpToolResult::error(QStringLiteral("'start_point_id' and 'end_point_id' must differ."));
+        }
+        if (!checkFormula(variables, QStringLiteral("angle1"), angle1, value, error)
+            || !checkFormula(variables, QStringLiteral("angle2"), angle2, value, error)
+            || !checkFormula(variables, QStringLiteral("length1"), length1, value, error)
+            || !checkFormula(variables, QStringLiteral("length2"), length2, value, error))
+        {
+            return McpToolResult::error(error);
+        }
+    }
+    else // cubicBezier
+    {
+        if (!pointArg(ctx, arguments, "start_point_id", p1, error)
+            || !pointArg(ctx, arguments, "control1_point_id", p2, error)
+            || !pointArg(ctx, arguments, "control2_point_id", p3, error)
+            || !pointArg(ctx, arguments, "end_point_id", p4, error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (p1 == p4)
+        {
+            return McpToolResult::error(QStringLiteral("'start_point_id' and 'end_point_id' must differ."));
+        }
+    }
+
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(QObject::tr("Claude: add curve"));
+    quint32 newId = NULL_ID;
+    try
+    {
+        if (type == QStringLiteral("spline"))
+        {
+            VToolSpline *tool = VToolSpline::Create(0, p1, p4, angle1, angle2, length1, length2, 0, ColorBlack,
+                                                    LineTypeSolidLine, DefaultLineWeight, ctx.scene, ctx.doc,
+                                                    ctx.data, Document::FullParse, Source::FromGui);
+            newId = tool != nullptr ? tool->getId() : NULL_ID;
+        }
+        else
+        {
+            VCubicBezier *bezier = new VCubicBezier(*ctx.data->GeometricObject<VPointF>(p1),
+                                                    *ctx.data->GeometricObject<VPointF>(p2),
+                                                    *ctx.data->GeometricObject<VPointF>(p3),
+                                                    *ctx.data->GeometricObject<VPointF>(p4));
+            bezier->setLineColor(ColorBlack);
+            bezier->SetPenStyle(LineTypeSolidLine);
+            bezier->setLineWeight(DefaultLineWeight);
+            VToolCubicBezier *tool = VToolCubicBezier::Create(0, bezier, false, 0, QString(), ctx.scene, ctx.doc,
+                                                              ctx.data, Document::FullParse, Source::FromGui);
+            newId = tool != nullptr ? tool->getId() : NULL_ID;
+        }
+    }
+    catch (const VException &e)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("Could not create the curve: %1").arg(e.ErrorMessage()));
+    }
+    stack->endMacro();
+
+    if (newId == NULL_ID)
+    {
+        return McpToolResult::error(QStringLiteral("The curve could not be created."));
+    }
+    const QJsonObject result = curveJson(ctx.data, newId, type);
+    return McpToolResult::ok(QStringLiteral("Added curve %1 (id %2, length %3 %4). Undo removes it.")
+                                 .arg(result.value(QStringLiteral("name")).toString()).arg(newId)
+                                 .arg(result.value(QStringLiteral("length")).toDouble())
+                                 .arg(UnitsToStr(qApp->patternUnit())),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::addArc(const QJsonObject &arguments)
+{
+    const Context ctx = currentContext();
+    if (!ctx.valid())
+    {
+        return McpToolResult::error(ctx.error);
+    }
+
+    QString error;
+    quint32 center = NULL_ID;
+    if (!pointArg(ctx, arguments, "center_point_id", center, error))
+    {
+        return McpToolResult::error(error);
+    }
+    QString radius = stringArg(arguments, "radius");
+    QString startAngle = stringArg(arguments, "start_angle");
+    QString endAngle = stringArg(arguments, "end_angle");
+    const QHash<QString, QSharedPointer<VInternalVariable>> variables = *ctx.data->DataVariables();
+    double radiusValue = 0;
+    double ignored = 0;
+    if (!checkFormula(variables, QStringLiteral("radius"), radius, radiusValue, error)
+        || !checkFormula(variables, QStringLiteral("start_angle"), startAngle, ignored, error)
+        || !checkFormula(variables, QStringLiteral("end_angle"), endAngle, ignored, error))
+    {
+        return McpToolResult::error(error);
+    }
+    if (radiusValue <= 0)
+    {
+        return McpToolResult::error(QStringLiteral("'radius' must be greater than 0 (it is %1).").arg(radiusValue));
+    }
+
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(QObject::tr("Claude: add arc"));
+    quint32 newId = NULL_ID;
+    try
+    {
+        VToolArc *tool = VToolArc::Create(0, center, radius, startAngle, endAngle, ColorBlack, LineTypeSolidLine,
+                                          DefaultLineWeight, ctx.scene, ctx.doc, ctx.data, Document::FullParse,
+                                          Source::FromGui);
+        newId = tool != nullptr ? tool->getId() : NULL_ID;
+    }
+    catch (const VException &e)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("Could not create the arc: %1").arg(e.ErrorMessage()));
+    }
+    stack->endMacro();
+
+    if (newId == NULL_ID)
+    {
+        return McpToolResult::error(QStringLiteral("The arc could not be created."));
+    }
+    const QJsonObject result = curveJson(ctx.data, newId, QStringLiteral("arc"));
+    return McpToolResult::ok(QStringLiteral("Added arc %1 (id %2, length %3 %4). Undo removes it.")
+                                 .arg(result.value(QStringLiteral("name")).toString()).arg(newId)
+                                 .arg(result.value(QStringLiteral("length")).toDouble())
+                                 .arg(UnitsToStr(qApp->patternUnit())),
+                             result);
+}
+
 //---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::addDraftBlock(const QJsonObject &arguments)
 {
@@ -1432,6 +1669,78 @@ McpTool PatternEditor::deleteVariableTool()
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::addCurveTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("add_curve");
+    tool.description =
+        QStringLiteral("Draws a curve between existing points of the active draft block. It appears on the canvas "
+                       "immediately and is one Undo step. The result contains the curve's id, name and length. "
+                       "Types:\n"
+                       "- spline: a smooth curve from 'start_point_id' to 'end_point_id'. 'angle1' is the "
+                       "direction in degrees in which the curve leaves the start point and 'angle2' the direction "
+                       "in which it arrives at the end point (0 = right, 90 = up, 180 = left, 270 = down on the "
+                       "screen); 'length1' and 'length2' (pattern unit, formulas allowed) are the lengths of the "
+                       "control handles at start and end: longer handles make a rounder curve.\n"
+                       "- cubicBezier: a Bezier curve through 'start_point_id' and 'end_point_id' that is pulled "
+                       "towards the control points 'control1_point_id' (at the start) and 'control2_point_id' (at "
+                       "the end), which must be existing points.\n"
+                       "Errors leave the pattern unchanged.");
+    QJsonObject properties;
+    properties.insert(QStringLiteral("type"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("spline"),
+                                                                      VToolCubicBezier::ToolType}},
+                                  {QStringLiteral("description"), QStringLiteral("Kind of curve.")}});
+    properties.insert(QStringLiteral("start_point_id"), idProperty(QStringLiteral("Id of the start point.")));
+    properties.insert(QStringLiteral("end_point_id"), idProperty(QStringLiteral("Id of the end point.")));
+    properties.insert(QStringLiteral("control1_point_id"),
+                      idProperty(QStringLiteral("cubicBezier: id of the first control point.")));
+    properties.insert(QStringLiteral("control2_point_id"),
+                      idProperty(QStringLiteral("cubicBezier: id of the second control point.")));
+    properties.insert(QStringLiteral("angle1"),
+                      stringProperty(QStringLiteral("spline: leaving direction at the start, degrees.")));
+    properties.insert(QStringLiteral("angle2"),
+                      stringProperty(QStringLiteral("spline: arriving direction at the end, degrees.")));
+    properties.insert(QStringLiteral("length1"),
+                      stringProperty(QStringLiteral("spline: handle length at the start (number or formula).")));
+    properties.insert(QStringLiteral("length2"),
+                      stringProperty(QStringLiteral("spline: handle length at the end (number or formula).")));
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"),
+                                    QJsonArray{QStringLiteral("type"), QStringLiteral("start_point_id"),
+                                               QStringLiteral("end_point_id")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addCurve(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::addArcTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("add_arc");
+    tool.description =
+        QStringLiteral("Draws a circular arc around an existing point. It appears on the canvas immediately and is "
+                       "one Undo step. The arc runs counter-clockwise (as seen on the screen) from 'start_angle' to "
+                       "'end_angle' (degrees, 0 = right, 90 = up) at distance 'radius' (pattern unit, formula "
+                       "allowed, greater than 0) from the center point. The result contains the arc's id, name and "
+                       "length.");
+    QJsonObject properties;
+    properties.insert(QStringLiteral("center_point_id"), idProperty(QStringLiteral("Id of the center point.")));
+    properties.insert(QStringLiteral("radius"), stringProperty(QStringLiteral("Radius, number or formula.")));
+    properties.insert(QStringLiteral("start_angle"), stringProperty(QStringLiteral("Start angle in degrees.")));
+    properties.insert(QStringLiteral("end_angle"), stringProperty(QStringLiteral("End angle in degrees.")));
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"),
+                                    QJsonArray{QStringLiteral("center_point_id"), QStringLiteral("radius"),
+                                               QStringLiteral("start_angle"), QStringLiteral("end_angle")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addArc(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 McpTool PatternEditor::addDraftBlockTool()
 {
     McpTool tool;
@@ -1466,9 +1775,25 @@ McpTool PatternEditor::listObjectsTool()
         QStringLiteral("Lists the objects (points, lines, curves, ...) of the active draft block in construction "
                        "order. Each entry has its element type, its stored definition (formulas, referenced ids) "
                        "and, for points, id, name and position (x, y in the pattern unit, y grows downwards). Use "
-                       "the ids as references when drawing.");
-    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
-                                   {QStringLiteral("properties"), QJsonObject()}};
+                       "the ids as references when drawing. Big patterns have hundreds of objects: use the "
+                       "optional filters to list only what you need (they combine).");
+    tool.inputSchema = QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("element"),
+                      stringProperty(QStringLiteral("Only this kind of element, e.g. \"point\", \"line\", "
+                                                    "\"spline\", \"arc\", \"operation\"."))},
+                     {QStringLiteral("type"),
+                      stringProperty(QStringLiteral("Only this type, e.g. \"endLine\", \"alongLine\", "
+                                                    "\"normal\"."))},
+                     {QStringLiteral("name_contains"),
+                      stringProperty(QStringLiteral("Only objects whose name contains this text "
+                                                    "(case-insensitive)."))},
+                     {QStringLiteral("ids"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("array")},
+                                  {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"),
+                                                                         QStringLiteral("integer")}}},
+                                  {QStringLiteral("description"), QStringLiteral("Only these object ids.")}}}}}};
     tool.readOnly = true;
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::listObjects(arguments); };
     return tool;
