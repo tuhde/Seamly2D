@@ -2816,6 +2816,20 @@ QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
         }
     }
     result.insert(QStringLiteral("notches"), notches);
+    QJsonArray anchors;
+    for (const quint32 anchor : piece.getAnchors())
+    {
+        try
+        {
+            const QSharedPointer<VPointF> p = pieceData->GeometricObject<VPointF>(anchor);
+            anchors.append(QJsonObject{{QStringLiteral("pointId"), static_cast<qint64>(p->getIdObject())},
+                                       {QStringLiteral("name"), p->name()}});
+        }
+        catch (const VException &)
+        {
+        }
+    }
+    result.insert(QStringLiteral("anchorPoints"), anchors);
 
     try
     {

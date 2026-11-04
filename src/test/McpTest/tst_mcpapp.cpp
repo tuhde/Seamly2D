@@ -939,6 +939,9 @@ void TST_McpApp::pieceDetailsAreCuttingInstructions()
     QCOMPARE(ok(QStringLiteral("add_anchor_point"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointM}})).value(QStringLiteral("anchorPoints")).toInt(), 1);
     QVERIFY(fails(QStringLiteral("add_anchor_point"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointM}})).contains(QStringLiteral("already")));
     QVERIFY(fails(QStringLiteral("add_anchor_point"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), 99999}})).contains(QStringLiteral("point_id")));
+    const QJsonArray listedAnchors = ok(QStringLiteral("list_pieces")).value(QStringLiteral("pieces")).toArray().at(0).toObject().value(QStringLiteral("anchorPoints")).toArray();
+    QCOMPARE(listedAnchors.size(), 1);
+    QCOMPARE(listedAnchors.at(0).toObject().value(QStringLiteral("pointId")).toInt(), pointM);
     QVERIFY(ok(QStringLiteral("undo")).value(QStringLiteral("steps")).toArray().at(0).toString().contains(QStringLiteral("anchor")));
     QCOMPARE(ok(QStringLiteral("add_anchor_point"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointM}})).value(QStringLiteral("anchorPoints")).toInt(), 1);
     ok(QStringLiteral("undo"));
