@@ -239,7 +239,7 @@ void TST_McpApp::toolsAreListed()
     const QStringList expected{
         "get_pattern_info", "list_objects", "add_draft_block", "add_point", "add_line", "add_curve", "add_arc", "add_elliptical_arc",
         "update_object", "delete_object", "list_variables", "set_variable", "delete_variable", "add_piece",
-        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "add_anchor_point", "add_internal_path", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
+        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "add_anchor_point", "add_internal_path", "set_label", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
         "export_layout"};
     for (const QString &name : expected)
     {
@@ -953,6 +953,28 @@ void TST_McpApp::pieceDetailsAreCuttingInstructions()
     QVERIFY(fails(QStringLiteral("add_internal_path"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("nodes"), QJsonArray{pointB, pointB}}})).contains(QStringLiteral("twice")));
     QVERIFY(fails(QStringLiteral("add_internal_path"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("nodes"), QJsonArray{pointB, pointM}}, {QStringLiteral("line_type"), QStringLiteral("wavy")}})).contains(QStringLiteral("line_type")));
     QVERIFY(ok(QStringLiteral("undo")).value(QStringLiteral("steps")).toArray().at(0).toString().contains(QStringLiteral("internal path")));
+
+    // Labels: switched on with a default size, then sized by hand; errors change nothing.
+    auto pieceLabel = [this](const QString &which)
+    {
+        return ok(QStringLiteral("list_pieces")).value(QStringLiteral("pieces")).toArray().at(0).toObject()
+            .value(QStringLiteral("labels")).toObject().value(which).toObject();
+    };
+    ok(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("visible"), true}}));
+    QVERIFY(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("visible")).toBool());
+    QVERIFY(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("width")).toString().toDouble() > 0);
+    ok(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("width"), 7}, {QStringLiteral("height"), QStringLiteral("3+1")},
+                                         {QStringLiteral("font_size"), 12}, {QStringLiteral("angle"), 30}}));
+    QCOMPARE(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("width")).toString(), QStringLiteral("7"));
+    QCOMPARE(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("height")).toString(), QStringLiteral("4"));
+    QCOMPARE(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("fontSize")).toInt(), 12);
+    QVERIFY(fails(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("width"), 0}})).contains(QStringLiteral("greater than 0")));
+    QVERIFY(fails(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("font_size"), 2}})).contains(QStringLiteral("font_size")));
+    QVERIFY(fails(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("label"), QStringLiteral("x")}})).contains(QStringLiteral("'label'")));
+    QVERIFY(fails(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("colour"), 1}})).contains(QStringLiteral("Unknown argument")));
+    ok(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("visible"), false}}));
+    QVERIFY(!pieceLabel(QStringLiteral("piece")).value(QStringLiteral("visible")).toBool());
+    QCOMPARE(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("fontSize")).toInt(), 12);
 
     // Everything above is one undo step per call and shows up in list_pieces.
     const QJsonObject listed = ok(QStringLiteral("list_pieces")).value(QStringLiteral("pieces")).toArray().at(0).toObject();

@@ -2830,6 +2830,16 @@ QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
         }
     }
     result.insert(QStringLiteral("anchorPoints"), anchors);
+    auto labelJson = [](const VPatternLabelData &label)
+    {
+        return QJsonObject{{QStringLiteral("visible"), label.IsVisible()},
+                           {QStringLiteral("width"), label.GetLabelWidth()},
+                           {QStringLiteral("height"), label.GetLabelHeight()},
+                           {QStringLiteral("fontSize"), label.getFontSize()},
+                           {QStringLiteral("angle"), label.getRotation()}};
+    };
+    result.insert(QStringLiteral("labels"), QJsonObject{{QStringLiteral("piece"), labelJson(piece.GetPatternPieceData())},
+                                                        {QStringLiteral("pattern"), labelJson(piece.GetPatternInfo())}});
 
     try
     {
@@ -3722,6 +3732,153 @@ McpTool PatternEditor::addInternalPathTool()
                      {QStringLiteral("cut"), QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")}}}}},
         {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id"), QStringLiteral("nodes")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addInternalPath(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::setLabel(const QJsonObject &arguments)
+{
+    PieceRef ref;
+    QString error;
+    if (!findPiece(arguments, ref, error))
+    {
+        return McpToolResult::error(error);
+    }
+    const QString which = stringArg(arguments, "label").isEmpty() ? QStringLiteral("piece")
+                                                                    : stringArg(arguments, "label").toLower();
+    if (which != QLatin1String("piece") && which != QLatin1String("pattern"))
+    {
+        return McpToolResult::error(QStringLiteral("'label' must be \"piece\" (name, letter, quantity) or \"pattern\" "
+                                                   "(information about the pattern)."));
+    }
+    VPiece piece = ref.piece;
+    VPatternLabelData &label = which == QLatin1String("piece") ? static_cast<VPatternLabelData &>(piece.GetPatternPieceData())
+                                                               : piece.GetPatternInfo();
+    static const QStringList known{QStringLiteral("piece_id"), QStringLiteral("label"), QStringLiteral("visible"),
+                                   QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("font_size"),
+                                   QStringLiteral("angle")};
+    for (auto it = arguments.constBegin(); it != arguments.constEnd(); ++it)
+    {
+        if (!known.contains(it.key()))
+        {
+            return McpToolResult::error(QStringLiteral("Unknown argument '%1'. Known: %2.")
+                                            .arg(it.key(), known.join(QStringLiteral(", "))));
+        }
+    }
+    const QHash<QString, QSharedPointer<VInternalVariable>> variables = *ref.data->DataVariables();
+    double value = 0;
+    auto formula = [&](const char *key, QString &out) -> bool
+    {
+        const QJsonValue raw = arguments.value(QLatin1String(key));
+        out = raw.isDouble() ? QString::number(raw.toDouble()) : raw.toString().trimmed();
+        return checkFormula(variables, QLatin1String(key), out, value, error);
+    };
+    if (arguments.contains(QStringLiteral("width")) || arguments.contains(QStringLiteral("height")))
+    {
+        for (const char *key : {"width", "height"})
+        {
+            if (!arguments.contains(QLatin1String(key)))
+            {
+                continue;
+            }
+            QString text;
+            if (!formula(key, text))
+            {
+                return McpToolResult::error(error);
+            }
+            if (value <= 0)
+            {
+                return McpToolResult::error(QStringLiteral("'%1' must be greater than 0.").arg(QLatin1String(key)));
+            }
+            // The label sizes are stored as plain numbers: a formula is evaluated now.
+            if (QLatin1String(key) == QLatin1String("width"))
+            {
+                label.SetLabelWidth(QString::number(value, 'g', 10));
+            }
+            else
+            {
+                label.SetLabelHeight(QString::number(value, 'g', 10));
+            }
+        }
+    }
+    if (arguments.contains(QStringLiteral("angle")))
+    {
+        QString text;
+        if (!formula("angle", text))
+        {
+            return McpToolResult::error(error);
+        }
+        label.SetRotation(text);
+    }
+    if (arguments.contains(QStringLiteral("font_size")))
+    {
+        const QJsonValue size = arguments.value(QStringLiteral("font_size"));
+        if (!size.isDouble() || size.toDouble() < 4 || size.toDouble() > 100 || size.toDouble() != qFloor(size.toDouble()))
+        {
+            return McpToolResult::error(QStringLiteral("'font_size' must be a whole number from 4 to 100 (points)."));
+        }
+        label.SetFontSize(static_cast<int>(size.toDouble()));
+    }
+    if (arguments.contains(QStringLiteral("visible")))
+    {
+        label.SetVisible(arguments.value(QStringLiteral("visible")).toBool(true));
+    }
+    if (label.IsVisible())
+    {
+        // A label without size or position cannot be seen: give it the size of a small tag in the middle of the
+        // piece, like a label that was just switched on in the piece dialog.
+        const QRectF box = QPolygonF(piece.mainPathPoints(ref.data)).boundingRect();
+        bool widthOk = false;
+        bool heightOk = false;
+        label.GetLabelWidth().toDouble(&widthOk);
+        label.GetLabelHeight().toDouble(&heightOk);
+        if (!widthOk || label.GetLabelWidth().toDouble() <= 0)
+        {
+            label.SetLabelWidth(QString::number(UnitConvertor(60.0, Unit::Mm, qApp->patternUnit())));
+        }
+        if (!heightOk || label.GetLabelHeight().toDouble() <= 0)
+        {
+            label.SetLabelHeight(QString::number(UnitConvertor(30.0, Unit::Mm, qApp->patternUnit())));
+        }
+        if (label.GetPos().isNull())
+        {
+            label.setCenterAnchorPoint(NULL_ID);
+            label.setTopLeftAnchorPoint(NULL_ID);
+            label.setBottomRightAnchorPoint(NULL_ID);
+            label.SetPos(box.center());
+        }
+    }
+    return applyPieceChange(ref, piece, QObject::tr("Claude: change %1 label of %2").arg(which, piece.GetName()),
+                            QStringLiteral("Changed the %1 label of piece \"%2\" (%3).")
+                                .arg(which, piece.GetName(),
+                                     label.IsVisible() ? QStringLiteral("visible") : QStringLiteral("hidden")));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::setLabelTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("set_label");
+    tool.description =
+        QStringLiteral("Shows, hides or resizes a label on a piece. 'label' is \"piece\" (default: name, letter, "
+                       "quantity) or \"pattern\" (information about the pattern). Optional: visible, width and "
+                       "height (pattern unit; a formula is evaluated once), font_size (points) and angle (degrees). A label that "
+                       "is switched on without size or position gets a small default size in the middle of the "
+                       "piece. One Undo step.");
+    tool.inputSchema = QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("piece_id"), idProperty(QStringLiteral("Piece id from list_pieces."))},
+                     {QStringLiteral("label"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("piece"), QStringLiteral("pattern")}}}},
+                     {QStringLiteral("visible"), QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")}}},
+                     {QStringLiteral("width"), stringProperty(QStringLiteral("Width, number or formula."))},
+                     {QStringLiteral("height"), stringProperty(QStringLiteral("Height, number or formula."))},
+                     {QStringLiteral("font_size"), idProperty(QStringLiteral("Font size in points (4-100)."))},
+                     {QStringLiteral("angle"), stringProperty(QStringLiteral("Rotation in degrees."))}}},
+        {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setLabel(arguments); };
     return tool;
 }
 
