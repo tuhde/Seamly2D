@@ -96,6 +96,7 @@
 #include "../vtools/tools/nodeDetails/internal_path_tool.h"
 #include "../vtools/undocommands/addgroup.h"
 #include "mcp/dialog_claude_connection.h"
+#include "dialogs/layoutsettings_dialog.h"
 #include "mcp/mcp_integration.h"
 #ifdef SEAMLY_HAVE_QTERMWIDGET
 #include "mcp/claude_shell_panel.h"
@@ -6931,7 +6932,7 @@ bool mcpConfirmFileAccess(QWidget *parent, const QString &title, const QString &
     box.setText(text);
     box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
     box.setDefaultButton(QMessageBox::No);
-    QCheckBox *remember = new QCheckBox(QObject::tr("Don't ask again for this file in this session"), &box);
+    QCheckBox *remember = new QCheckBox(QObject::tr("Don't ask again for this in this session"), &box);
     box.setCheckBox(remember);
     if (box.exec() != QMessageBox::Yes)
     {
@@ -7101,6 +7102,267 @@ QJsonObject MainWindow::mcpOpenPattern(const QString &path, const QString &measu
         return QJsonObject();
     }
     return mcpPatternInfo();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpExportLayout(const QJsonObject &options, QString &error)
+{
+    auto text = [&options](const char *key) { return options.value(QLatin1String(key)).toString().trimmed(); };
+    auto number = [&options](const char *key, bool &given)
+    {
+        const QJsonValue value = options.value(QLatin1String(key));
+        given = value.isDouble();
+        return value.toDouble();
+    };
+
+    const QHash<quint32, VPiece> *pieces = pattern->DataPieces();
+    if (pieces->isEmpty())
+    {
+        error = QStringLiteral("The pattern has no pieces yet; create them with add_piece first.");
+        return QJsonObject();
+    }
+
+    // --- what to export -------------------------------------------------------------------------------------------
+    static const QMap<QString, LayoutExportFormat> formats{
+        {QStringLiteral("svg"), LayoutExportFormat::SVG},   {QStringLiteral("pdf"), LayoutExportFormat::PDF},
+        {QStringLiteral("png"), LayoutExportFormat::PNG},   {QStringLiteral("jpg"), LayoutExportFormat::JPG},
+        {QStringLiteral("tif"), LayoutExportFormat::TIF},   {QStringLiteral("eps"), LayoutExportFormat::EPS},
+        {QStringLiteral("ps"), LayoutExportFormat::PS},     {QStringLiteral("dxf"), LayoutExportFormat::DXF_AC1015_Flat},
+        {QStringLiteral("dxf_aama"), LayoutExportFormat::DXF_AC1015_AAMA},
+        {QStringLiteral("dxf_astm"), LayoutExportFormat::DXF_AC1015_ASTM}};
+    const QString formatName = text("format").isEmpty() ? QStringLiteral("pdf") : text("format").toLower();
+    if (!formats.contains(formatName))
+    {
+        error = QStringLiteral("Unknown format \"%1\". Use one of: %2.")
+                    .arg(formatName, QStringList(formats.keys()).join(QStringLiteral(", ")));
+        return QJsonObject();
+    }
+    const LayoutExportFormat format = formats.value(formatName);
+    const QString mode = text("mode").isEmpty() ? QStringLiteral("layout") : text("mode");
+    if (mode != QLatin1String("layout") && mode != QLatin1String("pieces"))
+    {
+        error = QStringLiteral("'mode' must be \"layout\" (pieces arranged on pages) or \"pieces\" (each piece "
+                               "on its own).");
+        return QJsonObject();
+    }
+
+    // --- where to ---------------------------------------------------------------------------------------------------
+    const QFileInfo directoryInfo(text("directory"));
+    if (text("directory").isEmpty() || !directoryInfo.isAbsolute())
+    {
+        error = QStringLiteral("'directory' is required and must be an absolute path.");
+        return QJsonObject();
+    }
+    const QString directory = QDir::cleanPath(directoryInfo.absoluteFilePath());
+    if (!directoryInfo.exists())
+    {
+        const QFileInfo parent(directoryInfo.dir().absolutePath());
+        if (!parent.exists() || !parent.isWritable())
+        {
+            error = QStringLiteral("The folder \"%1\" does not exist and cannot be created.").arg(directory);
+            return QJsonObject();
+        }
+    }
+    else if (!directoryInfo.isDir() || !directoryInfo.isWritable())
+    {
+        error = QStringLiteral("\"%1\" is not a writable folder.").arg(directory);
+        return QJsonObject();
+    }
+    QString name = text("name");
+    if (name.isEmpty())
+    {
+        name = qApp->getFilePath().isEmpty() ? QStringLiteral("pattern") : QFileInfo(qApp->getFilePath()).baseName();
+    }
+    static const QRegularExpression validName(QStringLiteral("^[\\p{L}\\p{N}_][\\p{L}\\p{N}_ .-]*$"));
+    if (!name.contains(validName) || name.contains(QLatin1String("..")))
+    {
+        error = QStringLiteral("'name' must be a plain file name without folders (letters, digits, _ - . and "
+                               "spaces).");
+        return QJsonObject();
+    }
+
+    // --- layout settings (only for "layout"); validated before the user is asked -----------------------------------
+    VLayoutGeneratorPtr generator(new VLayoutGenerator());
+    LayoutSettingsDialog settings(generator.get(), nullptr, true);   // never shown; same model the command line uses
+    if (mode == QLatin1String("layout"))
+    {
+        static const QMap<QString, PaperSizeFormat> papers{
+            {QStringLiteral("A0"), PaperSizeFormat::A0},          {QStringLiteral("A1"), PaperSizeFormat::A1},
+            {QStringLiteral("A2"), PaperSizeFormat::A2},          {QStringLiteral("A3"), PaperSizeFormat::A3},
+            {QStringLiteral("A4"), PaperSizeFormat::A4},          {QStringLiteral("LETTER"), PaperSizeFormat::Letter},
+            {QStringLiteral("LEGAL"), PaperSizeFormat::Legal},    {QStringLiteral("TABLOID"), PaperSizeFormat::Tabloid}};
+        bool hasWidth = false;
+        bool hasHeight = false;
+        const double width = number("paper_width", hasWidth);
+        const double height = number("paper_height", hasHeight);
+        const QString unitName = text("paper_unit").isEmpty() ? QStringLiteral("mm") : text("paper_unit").toLower();
+        if (unitName != QLatin1String("mm") && unitName != QLatin1String("cm") && unitName != QLatin1String("inch"))
+        {
+            error = QStringLiteral("'paper_unit' must be \"mm\", \"cm\" or \"inch\".");
+            return QJsonObject();
+        }
+        const Unit paperUnit = StrToUnits(unitName);
+        if (hasWidth || hasHeight)
+        {
+            if (!hasWidth || !hasHeight || width <= 0 || height <= 0)
+            {
+                error = QStringLiteral("A custom page needs both 'paper_width' and 'paper_height' (greater than 0).");
+                return QJsonObject();
+            }
+            settings.SelectTemplate(PaperSizeFormat::Custom);
+            settings.SelectPaperUnit(unitName);
+            settings.SetPaperWidth(UnitConvertor(width, paperUnit, Unit::Px));
+            settings.SetPaperHeight(UnitConvertor(height, paperUnit, Unit::Px));
+        }
+        else
+        {
+            const QString paper = text("paper").isEmpty() ? QStringLiteral("A4") : text("paper").toUpper();
+            if (!papers.contains(paper))
+            {
+                error = QStringLiteral("Unknown paper \"%1\". Use one of: %2, or give paper_width, paper_height and "
+                                       "paper_unit.").arg(paper, QStringList(papers.keys()).join(QStringLiteral(", ")));
+                return QJsonObject();
+            }
+            settings.SelectTemplate(papers.value(paper));
+        }
+
+        bool given = false;
+        const double margin = number("margin", given);
+        if (given)
+        {
+            if (margin < 0)
+            {
+                error = QStringLiteral("'margin' must not be negative.");
+                return QJsonObject();
+            }
+            const qreal px = UnitConvertor(margin, StrToUnits(unitName), Unit::Px);
+            settings.SetFields(QMarginsF(px, px, px, px));
+        }
+        const double gap = number("gap", given);
+        if (given)
+        {
+            if (gap < 0)
+            {
+                error = QStringLiteral("'gap' must not be negative.");
+                return QJsonObject();
+            }
+            settings.SelectLayoutUnit(QStringLiteral("mm"));
+            settings.setLayoutGap(UnitConvertor(gap, Unit::Mm, Unit::Px));
+        }
+        if (options.contains(QStringLiteral("rotate")))
+        {
+            settings.SetRotate(options.value(QStringLiteral("rotate")).toBool(false));
+        }
+        settings.SetAutoCrop(options.value(QStringLiteral("crop")).toBool(false));
+        settings.DialogAccepted();
+
+        // A piece that does not fit makes the layout fail with a blocking message box; check before.
+        const QMarginsF fields = settings.IsIgnoreAllFields() ? QMarginsF() : settings.GetFields();
+        const double availableWidth = settings.GetPaperWidth() - fields.left() - fields.right();
+        const double availableHeight = settings.GetPaperHeight() - fields.top() - fields.bottom();
+        for (const VLayoutPiece &piece : preparePiecesForLayout(*pieces))
+        {
+            if (piece.getContourPoints().isEmpty())
+            {
+                continue;   // nothing to measure
+            }
+            // pieceBoundingRect() includes the seam allowance; LayoutBoundingRect() would need the layout generator.
+            const QRectF box = piece.pieceBoundingRect();
+            const bool fits = (box.width() <= availableWidth && box.height() <= availableHeight)
+                              || (settings.GetRotate() && box.width() <= availableHeight
+                                  && box.height() <= availableWidth);
+            if (!fits)
+            {
+                error = QStringLiteral("The piece \"%1\" (%2 x %3 %4, including its seam allowance) does not fit on "
+                                       "the page (%5 x %6 %4 printable). Choose a bigger paper, or allow "
+                                       "rotating ('rotate').")
+                            .arg(piece.GetName())
+                            .arg(qApp->fromPixel(box.width()), 0, 'f', 1).arg(qApp->fromPixel(box.height()), 0, 'f', 1)
+                            .arg(UnitsToStr(qApp->patternUnit()))
+                            .arg(qApp->fromPixel(availableWidth), 0, 'f', 1)
+                            .arg(qApp->fromPixel(availableHeight), 0, 'f', 1);
+                return QJsonObject();
+            }
+        }
+    }
+
+    // --- ask the user -----------------------------------------------------------------------------------------------
+    const QString suffix = ExportLayoutDialog::exportFormatSuffix(format);
+    const QStringList existing = QDir(directory).entryList(QStringList{name + QLatin1String("*") + suffix},
+                                                           QDir::Files);
+    if (!mcpConfirmFileAccess(this, tr("Claude wants to export the pattern"),
+                              tr("Claude wants to export the pattern pieces as %1 to this folder:\n\n%2\n\nFile "
+                                 "names: %3*%4%5")
+                                  .arg(formatName.toUpper(), directory, name, suffix,
+                                       existing.isEmpty() ? QString()
+                                                          : tr("\n\n%1 existing file(s) with such names will be "
+                                                               "replaced.").arg(existing.size())),
+                              QStringLiteral("export:") + directory))
+    {
+        error = QStringLiteral("The user did not allow exporting to \"%1\".").arg(directory);
+        return QJsonObject();
+    }
+
+    // --- run the same steps as the command-line export (DoExport), without quitting the program -------------------
+    const QDateTime started = QDateTime::currentDateTime().addSecs(-1);
+    pieceList = preparePiecesForLayout(*pieces);
+    int pages = 1;
+    try
+    {
+        if (mode == QLatin1String("pieces"))
+        {
+            ExportLayoutDialog dialog(1, Draw::Modeling, name, this);
+            dialog.setDestinationPath(directory);
+            dialog.selectFormat(format);
+            dialog.setBinaryDXFFormat(true);
+            dialog.setTextAsPaths(false);
+            ExportData(pieceList, dialog);
+        }
+        else
+        {
+            generator->setTextAsPaths(false);
+            if (!LayoutSettings(*generator))
+            {
+                error = QStringLiteral("The layout could not be created (see the message in Seamly2D).");
+                return QJsonObject();
+            }
+            pages = scenes.size();
+            ExportLayoutDialog dialog(scenes.size(), Draw::Layout, name, this);
+            dialog.setDestinationPath(directory);
+            dialog.selectFormat(format);
+            dialog.setBinaryDXFFormat(true);
+            dialog.setTextAsPaths(false);
+            ExportData(pieceList, dialog);
+        }
+    }
+    catch (const VException &exception)
+    {
+        error = QStringLiteral("Export failed: %1").arg(exception.ErrorMessage());
+        return QJsonObject();
+    }
+
+    QJsonArray files;
+    const QFileInfoList written = QDir(directory).entryInfoList(QStringList{name + QLatin1String("*")}, QDir::Files,
+                                                                QDir::Name);
+    for (const QFileInfo &file : written)
+    {
+        if (file.lastModified() >= started)
+        {
+            files.append(QJsonObject{{QStringLiteral("path"), file.absoluteFilePath()},
+                                     {QStringLiteral("bytes"), static_cast<qint64>(file.size())}});
+        }
+    }
+    if (files.isEmpty())
+    {
+        error = QStringLiteral("No file was written to \"%1\" (see the message in Seamly2D).").arg(directory);
+        return QJsonObject();
+    }
+    return QJsonObject{{QStringLiteral("mode"), mode},
+                       {QStringLiteral("format"), formatName},
+                       {QStringLiteral("directory"), directory},
+                       {QStringLiteral("pages"), mode == QLatin1String("layout") ? pages : 0},
+                       {QStringLiteral("pieces"), pieces->size()},
+                       {QStringLiteral("files"), files}};
 }
 
 //---------------------------------------------------------------------------------------------------------------------

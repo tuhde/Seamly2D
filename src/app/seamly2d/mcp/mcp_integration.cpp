@@ -45,7 +45,7 @@ const char *const kInstructions =
     "check the result with list_objects. Points refer to earlier points by their id. A drawing becomes a pattern "
     "piece (what gets laid out and exported) with add_piece, which takes the outline's point ids in order. Call "
     "fit_view after drawing, and show_mode to switch between the draft and piece view, so that the user sees the "
-    "result. Save the work with save_pattern; Seamly2D asks the user to confirm writing to a file.";
+    "result. Save the work with save_pattern and write printable/cuttable files with export_layout; Seamly2D asks the user to confirm writing to a file or folder.";
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -211,6 +211,7 @@ void McpIntegration::registerTools()
     m_registry.registerTool(PatternEditor::listPiecesTool());
     m_registry.registerTool(PatternEditor::deletePieceTool());
     m_registry.registerTool(PatternEditor::showModeTool());
+    m_registry.registerTool(PatternEditor::exportLayoutTool());
     m_registry.registerTool(PatternEditor::savePatternTool());
     m_registry.registerTool(PatternEditor::openPatternTool());
     m_registry.registerTool(PatternEditor::fitViewTool());

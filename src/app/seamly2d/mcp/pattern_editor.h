@@ -77,12 +77,16 @@ public:
     static McpToolResult savePattern(const QJsonObject &arguments);
     static McpToolResult openPattern(const QJsonObject &arguments);
 
+    /// Tool `export_layout`: writes the pieces as pdf/svg/png/... (arranged on pages, or one by one).
+    static McpToolResult exportLayout(const QJsonObject &arguments);
+
     /// Tool `add_draft_block`: creates a draft block with its base point (for the first block also sets the unit).
     static McpToolResult addDraftBlock(const QJsonObject &arguments);
 
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool exportLayoutTool();
     static McpTool savePatternTool();
     static McpTool openPatternTool();
     static McpTool addPieceTool();

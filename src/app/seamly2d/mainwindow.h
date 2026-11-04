@@ -126,6 +126,9 @@ public:
     /// (Seamly2D would otherwise open a new window that has no Claude connection). The user is asked to confirm.
     QJsonObject mcpOpenPattern(const QString &path, const QString &measurementsPath, QString &error);
 
+    /// Exports the pattern pieces for the MCP tool `export_layout`: arranged on pages ("layout") or one by one ("pieces"),
+    /// as svg, pdf, png, ... The user is asked to confirm the destination folder. Never shows other dialogs. GUI thread only.
+    QJsonObject mcpExportLayout(const QJsonObject &options, QString &error);
     /// The scene that shows the pattern pieces (needed to create pieces without the Piece tool dialog).
     VMainGraphicsScene *mcpPieceScene() const { return pieceScene; }
     /// Enables the piece-related tools after a piece was added, like closing the Piece tool dialog does.

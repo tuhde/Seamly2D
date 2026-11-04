@@ -1910,6 +1910,26 @@ McpToolResult PatternEditor::openPattern(const QJsonObject &arguments)
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::exportLayout(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    QString error;
+    const QJsonObject result = window->mcpExportLayout(arguments, error);
+    if (!error.isEmpty())
+    {
+        return McpToolResult::error(error);
+    }
+    return McpToolResult::ok(QStringLiteral("Exported %1 file(s) to %2.")
+                                 .arg(result.value(QStringLiteral("files")).toArray().size())
+                                 .arg(result.value(QStringLiteral("directory")).toString()),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::addDraftBlock(const QJsonObject &arguments)
 {
     MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
@@ -2260,6 +2280,80 @@ McpTool PatternEditor::openPatternTool()
                                                                                "measurement file."))}}},
                                    {QStringLiteral("required"), QJsonArray{QStringLiteral("path")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::openPattern(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::exportLayoutTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("export_layout");
+    tool.description =
+        QStringLiteral("Exports the pattern pieces to files. mode \"layout\" (default) arranges all pieces on pages "
+                       "of the chosen paper, as for printing or cutting; mode \"pieces\" exports every piece on "
+                       "its own. Needs at least one piece (add_piece). 'directory' (absolute) is where the files "
+                       "go; they are named after 'name' (default: the pattern's file name) and numbered per page. "
+                       "Seamly2D asks the user to confirm the folder first (and warns if files would be replaced). "
+                       "A piece that does not fit the paper is reported before anything is written. If pieces "
+                       "that would fit together end up on separate pages, allow 'rotate' or reduce 'margin' and "
+                       "'gap'. The result lists the written files and the number of pages.");
+    QJsonObject properties;
+    properties.insert(QStringLiteral("directory"),
+                      stringProperty(QStringLiteral("Absolute path of the folder to write to (it may be created if "
+                                                    "its parent exists).")));
+    properties.insert(QStringLiteral("name"),
+                      stringProperty(QStringLiteral("Base file name without extension or folder.")));
+    properties.insert(QStringLiteral("format"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"),
+                                   QJsonArray{QStringLiteral("pdf"), QStringLiteral("svg"), QStringLiteral("png"),
+                                              QStringLiteral("jpg"), QStringLiteral("tif"), QStringLiteral("eps"),
+                                              QStringLiteral("ps"), QStringLiteral("dxf"),
+                                              QStringLiteral("dxf_aama"), QStringLiteral("dxf_astm")}},
+                                  {QStringLiteral("description"), QStringLiteral("File format, default pdf.")}});
+    properties.insert(QStringLiteral("mode"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("layout"),
+                                                                      QStringLiteral("pieces")}},
+                                  {QStringLiteral("description"),
+                                   QStringLiteral("layout = arranged on pages (default); pieces = one file per "
+                                                  "piece.")}});
+    properties.insert(QStringLiteral("paper"),
+                      stringProperty(QStringLiteral("Layout mode: page size A0, A1, A2, A3, A4 (default), Letter, "
+                                                    "Legal or Tabloid.")));
+    properties.insert(QStringLiteral("paper_width"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("number")},
+                                  {QStringLiteral("description"),
+                                   QStringLiteral("Custom page width in paper_unit (instead of 'paper'; needs "
+                                                  "paper_height).")}});
+    properties.insert(QStringLiteral("paper_height"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("number")},
+                                  {QStringLiteral("description"), QStringLiteral("Custom page height in paper_unit.")}});
+    properties.insert(QStringLiteral("paper_unit"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("mm"), QStringLiteral("cm"),
+                                                                      QStringLiteral("inch")}},
+                                  {QStringLiteral("description"), QStringLiteral("Unit of paper_width, paper_height "
+                                                                                 "and margin (default mm).")}});
+    properties.insert(QStringLiteral("margin"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("number")},
+                                  {QStringLiteral("description"), QStringLiteral("Page margin on all sides, in "
+                                                                                 "paper_unit.")}});
+    properties.insert(QStringLiteral("gap"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("number")},
+                                  {QStringLiteral("description"), QStringLiteral("Space between pieces on a page, "
+                                                                                 "in mm.")}});
+    properties.insert(QStringLiteral("rotate"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")},
+                                  {QStringLiteral("description"), QStringLiteral("Allow rotating pieces to save "
+                                                                                 "space.")}});
+    properties.insert(QStringLiteral("crop"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")},
+                                  {QStringLiteral("description"), QStringLiteral("Crop each page to its content.")}});
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("directory")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::exportLayout(arguments); };
     return tool;
 }
 
