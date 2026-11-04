@@ -219,10 +219,12 @@ void McpServer::onNewConnection()
             socket->deleteLater();
         });
 
-        // A client that connects and then stalls must not keep the socket (and its buffer) forever.
+        // A client that connects and then stalls must not keep the socket (and its buffer) forever. A request that was
+        // received completely is not stalled: its tool may wait for the user to answer a confirmation dialog.
         QTimer::singleShot(ConnectionTimeoutMs, socket, [this, socket]()
         {
-            if (m_connections.contains(socket))
+            const auto it = m_connections.constFind(socket);
+            if (it != m_connections.constEnd() && !it->processing)
             {
                 socket->abort();
             }
@@ -289,7 +291,13 @@ void McpServer::readFromSocket(QTcpSocket *socket)
     }
     const QByteArray body = it->buffer.mid(static_cast<int>(bodyStart), static_cast<int>(contentLength));
     it->buffer.clear();
+    it->processing = true;
     processRequest(socket, requestLine, headers, body);
+    const auto after = m_connections.find(socket);   // the connection may be gone by now
+    if (after != m_connections.end())
+    {
+        after->processing = false;
+    }
 }
 
 //---------------------------------------------------------------------------------------------------------------------

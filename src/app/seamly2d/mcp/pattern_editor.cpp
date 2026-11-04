@@ -1873,6 +1873,43 @@ McpToolResult PatternEditor::showMode(const QJsonObject &arguments)
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::savePattern(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    QString error;
+    const QJsonObject result = window->mcpSavePattern(stringArg(arguments, "path"), error);
+    if (!error.isEmpty())
+    {
+        return McpToolResult::error(error);
+    }
+    return McpToolResult::ok(QStringLiteral("Saved the pattern to %1.").arg(result.value(QStringLiteral("path"))
+                                                                                .toString()),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::openPattern(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    QString error;
+    const QJsonObject result = window->mcpOpenPattern(stringArg(arguments, "path"),
+                                                      stringArg(arguments, "measurements_path"), error);
+    if (!error.isEmpty())
+    {
+        return McpToolResult::error(error);
+    }
+    return McpToolResult::ok(QStringLiteral("Opened the pattern:"), result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::addDraftBlock(const QJsonObject &arguments)
 {
     MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
@@ -2179,6 +2216,50 @@ McpTool PatternEditor::showModeTool()
                                                                          QStringLiteral("piece")}}}}}},
                                    {QStringLiteral("required"), QJsonArray{QStringLiteral("mode")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::showMode(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::savePatternTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("save_pattern");
+    tool.description =
+        QStringLiteral("Saves the pattern to a .sm2d file. Without 'path' it saves to the file the pattern was opened "
+                       "from or saved to before. The first time in a session that a file is written, Seamly2D asks "
+                       "the user to confirm (and shows the path), so expect a short delay; if the user declines, the "
+                       "call fails and nothing is written. 'path' must be absolute; \".sm2d\" is appended if the "
+                       "name has no extension.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("path"),
+                                                 stringProperty(QStringLiteral("Absolute path of the file to "
+                                                                               "write. Optional when the pattern "
+                                                                               "already has a file."))}}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::savePattern(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::openPatternTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("open_pattern");
+    tool.description =
+        QStringLiteral("Opens an existing pattern file (.sm2d) into this window. Only works while the window is "
+                       "empty (no pattern, no unsaved changes): otherwise Seamly2D would open another window that "
+                       "this connection cannot control, and the call fails with an explanation. Seamly2D asks the "
+                       "user to confirm the file first. Optionally give the absolute path of a measurement file "
+                       "(.smis/.smms) to use instead of the one the pattern refers to. 'path' must be absolute.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("path"),
+                                                 stringProperty(QStringLiteral("Absolute path of the .sm2d file."))},
+                                                {QStringLiteral("measurements_path"),
+                                                 stringProperty(QStringLiteral("Optional absolute path of a "
+                                                                               "measurement file."))}}},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("path")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::openPattern(arguments); };
     return tool;
 }
 

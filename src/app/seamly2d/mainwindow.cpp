@@ -119,6 +119,8 @@
 #include <QAction>
 #include <QProcess>
 #include <QSettings>
+#include <QCheckBox>
+#include <QSet>
 #include <QtGlobal>
 #include <QDesktopServices>
 #include <QJsonArray>
@@ -6905,6 +6907,200 @@ QJsonObject MainWindow::mcpAddDraftBlock(const QString &name, const QString &uni
         }
     }
     return result;
+}
+
+namespace
+{
+/// Files the user already allowed Claude to write to / open in this session.
+QSet<QString> &mcpAllowedFiles()
+{
+    static QSet<QString> allowed;
+    return allowed;
+}
+
+/// Asks the user whether Claude may access `path`. Remembered for the session when the box is ticked.
+bool mcpConfirmFileAccess(QWidget *parent, const QString &title, const QString &text, const QString &key)
+{
+    if (mcpAllowedFiles().contains(key))
+    {
+        return true;
+    }
+    QMessageBox box(parent);
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(title);
+    box.setText(text);
+    box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+    box.setDefaultButton(QMessageBox::No);
+    QCheckBox *remember = new QCheckBox(QObject::tr("Don't ask again for this file in this session"), &box);
+    box.setCheckBox(remember);
+    if (box.exec() != QMessageBox::Yes)
+    {
+        return false;
+    }
+    if (remember->isChecked())
+    {
+        mcpAllowedFiles().insert(key);
+    }
+    return true;
+}
+} // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpSavePattern(const QString &path, QString &error)
+{
+    if (draft_block_combobox->count() == 0)
+    {
+        error = QStringLiteral("There is nothing to save yet: the pattern has no draft block.");
+        return QJsonObject();
+    }
+    if (patternReadOnly)
+    {
+        error = QStringLiteral("The pattern is read only and cannot be saved.");
+        return QJsonObject();
+    }
+
+    const QString current = qApp->getFilePath();
+    QString target = path.trimmed();
+    if (target.isEmpty())
+    {
+        target = current;
+        if (target.isEmpty())
+        {
+            error = QStringLiteral("The pattern has no file yet: give 'path' (absolute, ending in .%1).").arg(sm2dExt);
+            return QJsonObject();
+        }
+    }
+    else
+    {
+        QFileInfo info(target);
+        if (!info.isAbsolute())
+        {
+            error = QStringLiteral("'path' must be an absolute path.");
+            return QJsonObject();
+        }
+        if (info.suffix().isEmpty())
+        {
+            target += QLatin1String(".") + sm2dExt;
+            info.setFile(target);
+        }
+        if (info.suffix() != sm2dExt)
+        {
+            error = QStringLiteral("Pattern files must end in .%1 (got \"%2\").").arg(sm2dExt, info.fileName());
+            return QJsonObject();
+        }
+    }
+    target = QDir::cleanPath(target);
+
+    const QFileInfo targetInfo(target);
+    if (!targetInfo.dir().exists())
+    {
+        error = QStringLiteral("The folder \"%1\" does not exist.").arg(targetInfo.dir().absolutePath());
+        return QJsonObject();
+    }
+    const bool writable = targetInfo.exists() ? targetInfo.isWritable()
+                                              : QFileInfo(targetInfo.dir().absolutePath()).isWritable();
+    if (!writable)
+    {
+        error = QStringLiteral("\"%1\" is not writable.").arg(target);
+        return QJsonObject();
+    }
+
+    const bool overwrites = targetInfo.exists();
+    if (!mcpConfirmFileAccess(this, tr("Claude wants to save the pattern"),
+                              overwrites ? tr("Claude wants to save the pattern to this file and replace its content:\n\n%1")
+                                               .arg(target)
+                                         : tr("Claude wants to save the pattern to a new file:\n\n%1").arg(target),
+                              target))
+    {
+        error = QStringLiteral("The user did not allow saving to \"%1\".").arg(target);
+        return QJsonObject();
+    }
+
+    if (target != current && overwrites)
+    {
+        // Like Save As: another window may have this file open.
+        VLockGuard<char> lock(target);
+        if (!lock.IsLocked())
+        {
+            error = QStringLiteral("\"%1\" is open in another window.").arg(target);
+            return QJsonObject();
+        }
+    }
+
+    const bool wasModified = doc->IsModified();
+    QString saveError;
+    if (!SavePattern(target, saveError))
+    {
+        doc->SetModified(wasModified);
+        error = QStringLiteral("Could not save the file: %1").arg(saveError);
+        return QJsonObject();
+    }
+    if (!current.isEmpty())
+    {
+        QFile::remove(current + autosavePostfix);
+    }
+    m_curFileFormatVersion = VPatternConverter::PatternMaxVer;
+    m_curFileFormatVersionStr = VPatternConverter::PatternMaxVerStr;
+    if (target != current)
+    {
+        VlpCreateLock(m_lock, target);
+    }
+    return QJsonObject{{QStringLiteral("path"), target},
+                       {QStringLiteral("bytes"), static_cast<qint64>(QFileInfo(target).size())},
+                       {QStringLiteral("replacedExistingFile"), overwrites}};
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpOpenPattern(const QString &path, const QString &measurementsPath, QString &error)
+{
+    if (isWindowModified() || !qApp->getFilePath().isEmpty() || draft_block_combobox->count() > 0)
+    {
+        error = QStringLiteral("This window already contains a pattern. A file can only be opened into an empty "
+                               "window (Seamly2D would open a new window without a Claude connection). Save the "
+                               "current pattern and close it first, or ask the user to open the file.");
+        return QJsonObject();
+    }
+    const QFileInfo info(path.trimmed());
+    if (!info.isAbsolute())
+    {
+        error = QStringLiteral("'path' must be an absolute path.");
+        return QJsonObject();
+    }
+    if (info.suffix() != sm2dExt && info.suffix() != valExt)
+    {
+        error = QStringLiteral("Pattern files end in .%1 (got \"%2\").").arg(sm2dExt, info.fileName());
+        return QJsonObject();
+    }
+    if (!info.exists() || !info.isFile() || !info.isReadable())
+    {
+        error = QStringLiteral("\"%1\" does not exist or cannot be read.").arg(info.absoluteFilePath());
+        return QJsonObject();
+    }
+    QString measurements = measurementsPath.trimmed();
+    if (!measurements.isEmpty())
+    {
+        const QFileInfo m(measurements);
+        if (!m.isAbsolute() || !m.exists() || !m.isFile() || !m.isReadable())
+        {
+            error = QStringLiteral("'measurements_path' must be the absolute path of an existing measurement file.");
+            return QJsonObject();
+        }
+        measurements = m.absoluteFilePath();
+    }
+
+    const QString file = QDir::cleanPath(info.absoluteFilePath());
+    if (!mcpConfirmFileAccess(this, tr("Claude wants to open a pattern"),
+                              tr("Claude wants to open this pattern file:\n\n%1").arg(file), file))
+    {
+        error = QStringLiteral("The user did not allow opening \"%1\".").arg(file);
+        return QJsonObject();
+    }
+    if (!LoadPattern(file, measurements))
+    {
+        error = QStringLiteral("The pattern could not be loaded (see the message in Seamly2D).");
+        return QJsonObject();
+    }
+    return mcpPatternInfo();
 }
 
 //---------------------------------------------------------------------------------------------------------------------

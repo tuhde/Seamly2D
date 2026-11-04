@@ -73,12 +73,18 @@ public:
     static McpToolResult deletePiece(const QJsonObject &arguments);
     static McpToolResult showMode(const QJsonObject &arguments);
 
+    /// Tools `save_pattern` and `open_pattern` (the user is asked to confirm file access).
+    static McpToolResult savePattern(const QJsonObject &arguments);
+    static McpToolResult openPattern(const QJsonObject &arguments);
+
     /// Tool `add_draft_block`: creates a draft block with its base point (for the first block also sets the unit).
     static McpToolResult addDraftBlock(const QJsonObject &arguments);
 
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool savePatternTool();
+    static McpTool openPatternTool();
     static McpTool addPieceTool();
     static McpTool listPiecesTool();
     static McpTool deletePieceTool();

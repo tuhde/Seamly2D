@@ -119,6 +119,13 @@ public:
     /// on failure. GUI thread only.
     QJsonObject mcpAddDraftBlock(const QString &name, const QString &unit, QString &error);
 
+    /// Saves the pattern for the MCP tool `save_pattern`. Without `path` the current file is used. The first time Claude
+    /// writes to a file in a session the user is asked to confirm. Never shows other dialogs. GUI thread only.
+    QJsonObject mcpSavePattern(const QString &path, QString &error);
+    /// Opens a pattern file into this window for the MCP tool `open_pattern`; only possible while the window is empty
+    /// (Seamly2D would otherwise open a new window that has no Claude connection). The user is asked to confirm.
+    QJsonObject mcpOpenPattern(const QString &path, const QString &measurementsPath, QString &error);
+
     /// The scene that shows the pattern pieces (needed to create pieces without the Piece tool dialog).
     VMainGraphicsScene *mcpPieceScene() const { return pieceScene; }
     /// Enables the piece-related tools after a piece was added, like closing the Piece tool dialog does.

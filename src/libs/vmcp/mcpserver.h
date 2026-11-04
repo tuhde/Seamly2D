@@ -93,6 +93,7 @@ private:
     struct Connection
     {
         QByteArray buffer;
+        bool       processing = false;   ///< a complete request is being handled (a tool may wait for a dialog)
     };
 
     void readFromSocket(QTcpSocket *socket);
