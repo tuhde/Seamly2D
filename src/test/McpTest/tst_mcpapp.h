@@ -51,6 +51,7 @@ private slots:
     void objectsCanBeChangedAndDeleted();
     void curvesAndArcsReportTheirLength();
     void piecesReportAreaAndPerimeter();
+    void pieceDetailsAreCuttingInstructions();
     void savingAndReopeningGivesTheSamePattern();
     void exportWritesFiles();
     void screenshotReturnsAPng();

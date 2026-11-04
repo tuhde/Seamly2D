@@ -77,6 +77,11 @@ public:
     static McpToolResult savePattern(const QJsonObject &arguments);
     static McpToolResult openPattern(const QJsonObject &arguments);
 
+    /// Tools `update_piece` (quantity, label texts, fold, seam allowance, ...), `set_grainline` and `set_notch`.
+    static McpToolResult updatePiece(const QJsonObject &arguments);
+    static McpToolResult setGrainline(const QJsonObject &arguments);
+    static McpToolResult setNotch(const QJsonObject &arguments);
+
     /// Tool `export_layout`: writes the pieces as pdf/svg/png/... (arranged on pages, or one by one).
     static McpToolResult exportLayout(const QJsonObject &arguments);
 
@@ -89,6 +94,9 @@ public:
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool updatePieceTool();
+    static McpTool setGrainlineTool();
+    static McpTool setNotchTool();
     static McpTool screenshotTool();
     static McpTool exportLayoutTool();
     static McpTool savePatternTool();

@@ -64,10 +64,13 @@
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolspline.h"
 #include "../../libs/vtools/tools/pattern_piece_tool.h"
 #include "../../libs/vtools/tools/vabstracttool.h"
+#include "../../libs/vpatterndb/floatItemData/vgrainlinedata.h"
+#include "../../libs/vpatterndb/floatItemData/vpiecelabeldata.h"
 #include "../../libs/vpatterndb/vpiece.h"
 #include "../../libs/vpatterndb/vpiecenode.h"
 #include "../../libs/vpatterndb/vpiecepath.h"
 #include "../../libs/vtools/undocommands/deletepiece.h"
+#include "../../libs/vtools/undocommands/savepieceoptions.h"
 #include "../../libs/vtools/undocommands/deltool.h"
 #include "../../libs/vtools/undocommands/savetooloptions.h"
 #include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/vtoollineintersect.h"
@@ -1600,6 +1603,11 @@ double polygonPerimeter(const QVector<QPointF> &points)
     return length;
 }
 
+/// Names used for the notch types in the tools; the index is the NotchType value.
+const QStringList kNotchTypes{QStringLiteral("slit"), QStringLiteral("t"), QStringLiteral("v_internal"),
+                                  QStringLiteral("v_external"), QStringLiteral("u"), QStringLiteral("castle"),
+                                  QStringLiteral("diamond")};
+
 QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
 {
     QJsonObject result{{QStringLiteral("id"), static_cast<qint64>(id)},
@@ -1611,6 +1619,51 @@ QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
     // what the layout code uses).
     VAbstractTool *tool = qobject_cast<VAbstractTool *>(VAbstractPattern::getTool(id));
     const VContainer *pieceData = tool != nullptr ? tool->getData() : data;
+
+    // What the label, the cutting instructions and the notches say.
+    const VPieceLabelData &label = piece.GetPatternPieceData();
+    result.insert(QStringLiteral("quantity"), label.GetQuantity());
+    result.insert(QStringLiteral("onFold"), label.IsOnFold());
+    result.insert(QStringLiteral("inLayout"), piece.isInLayout());
+    if (!label.GetLetter().isEmpty())
+    {
+        result.insert(QStringLiteral("letter"), label.GetLetter());
+    }
+    if (!label.GetAnnotation().isEmpty())
+    {
+        result.insert(QStringLiteral("annotation"), label.GetAnnotation());
+    }
+    const VGrainlineData &grainline = piece.GetGrainlineGeometry();
+    result.insert(QStringLiteral("grainline"),
+                  grainline.IsVisible()
+                      ? QJsonObject{{QStringLiteral("visible"), true}, {QStringLiteral("angle"), grainline.getRotation()},
+                                    {QStringLiteral("length"), grainline.getLength()}}
+                      : QJsonObject{{QStringLiteral("visible"), false}});
+    QJsonArray notches;
+    for (int i = 0; i < piece.GetPath().nodeCount(); ++i)
+    {
+        const VPieceNode node = piece.GetPath().at(i);
+        if (node.GetTypeTool() != Tool::NodePoint || !node.isNotch())
+        {
+            continue;
+        }
+        try
+        {
+            const QSharedPointer<VPointF> p = pieceData->GeometricObject<VPointF>(node.GetId());
+            notches.append(QJsonObject{{QStringLiteral("pointId"), static_cast<qint64>(p->getIdObject())},
+                                       {QStringLiteral("name"), p->name()},
+                                       {QStringLiteral("type"), kNotchTypes.value(static_cast<int>(node.getNotchType()))},
+                                       {QStringLiteral("count"), node.getNotchCount()},
+                                       {QStringLiteral("onCutline"), node.showNotch()},
+                                       {QStringLiteral("onSeamline"), node.showSeamlineNotch()}});
+        }
+        catch (const VException &)
+        {
+            // a node that cannot be resolved is left out
+        }
+    }
+    result.insert(QStringLiteral("notches"), notches);
+
     try
     {
         const QVector<QPointF> outline = piece.mainPathPoints(pieceData);
@@ -2022,6 +2075,403 @@ McpToolResult PatternEditor::screenshot(const QJsonObject &arguments)
                                                  .arg(area).arg(image.width()).arg(image.height()));
     result.imagePng = png;
     return result;
+}
+
+namespace
+{
+/// A piece together with the data container that can resolve its nodes (a piece may belong to another draft block than
+/// the active one, so the container of its own tool is used, like the layout code does).
+struct PieceRef
+{
+    quint32           id = NULL_ID;
+    PatternPieceTool *tool = nullptr;
+    const VContainer *data = nullptr;
+    VPiece            piece;
+};
+
+bool findPiece(const QJsonObject &arguments, PieceRef &ref, QString &error)
+{
+    VContainer *current = qApp->getCurrentData();
+    if (current == nullptr || qApp->getCurrentDocument() == nullptr)
+    {
+        error = QStringLiteral("No pattern is open in Seamly2D.");
+        return false;
+    }
+    const QJsonValue idValue = arguments.value(QStringLiteral("piece_id"));
+    if (!idValue.isDouble() || idValue.toDouble() < 1 || idValue.toDouble() != qFloor(idValue.toDouble()))
+    {
+        error = QStringLiteral("'piece_id' is required: the id of a piece (see list_pieces).");
+        return false;
+    }
+    ref.id = static_cast<quint32>(idValue.toDouble());
+    if (!current->DataPieces()->contains(ref.id))
+    {
+        error = QStringLiteral("There is no piece with id %1 (see list_pieces).").arg(ref.id);
+        return false;
+    }
+    ref.tool = qobject_cast<PatternPieceTool *>(VAbstractPattern::getTool(ref.id));
+    if (ref.tool == nullptr)
+    {
+        error = QStringLiteral("The piece %1 cannot be changed with this tool.").arg(ref.id);
+        return false;
+    }
+    ref.data = ref.tool->getData();
+    ref.piece = ref.data->GetPiece(ref.id);
+    if (ref.piece.isLocked())
+    {
+        error = QStringLiteral("The piece \"%1\" is locked; unlock it in Seamly2D first.").arg(ref.piece.GetName());
+        return false;
+    }
+    return true;
+}
+
+/// Pushes the change like the piece dialog does (SavePieceOptions) and reports the new state of the piece.
+McpToolResult applyPieceChange(const PieceRef &ref, const VPiece &newPiece, const QString &undoText,
+                               const QString &message)
+{
+    VAbstractPattern *doc = qApp->getCurrentDocument();
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(undoText);
+    SavePieceOptions *command = new SavePieceOptions(ref.piece, newPiece, doc, ref.id);
+    QObject::connect(command, &SavePieceOptions::NeedLiteParsing, doc, &VAbstractPattern::LiteParseTree);
+    stack->push(command);
+    stack->endMacro();
+    // Re-read: the lite parse rebuilds the piece data.
+    const VContainer *data = ref.tool != nullptr ? ref.tool->getData() : qApp->getCurrentData();
+    return McpToolResult::ok(message, pieceJson(data, ref.id, data->GetPiece(ref.id)));
+}
+
+const QStringList kNotchSubTypes{QStringLiteral("straightforward"), QStringLiteral("bisector"),
+                                 QStringLiteral("intersection")};
+const QStringList kArrowTypes{QStringLiteral("both"), QStringLiteral("top"), QStringLiteral("bottom")};
+} // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::updatePiece(const QJsonObject &arguments)
+{
+    PieceRef ref;
+    QString error;
+    if (!findPiece(arguments, ref, error))
+    {
+        return McpToolResult::error(error);
+    }
+    static const QStringList known{QStringLiteral("piece_id"), QStringLiteral("name"), QStringLiteral("quantity"),
+                                   QStringLiteral("letter"), QStringLiteral("annotation"), QStringLiteral("on_fold"),
+                                   QStringLiteral("in_layout"), QStringLiteral("seam_allowance"),
+                                   QStringLiteral("seam_allowance_width")};
+    for (auto it = arguments.constBegin(); it != arguments.constEnd(); ++it)
+    {
+        if (!known.contains(it.key()))
+        {
+            return McpToolResult::error(QStringLiteral("'%1' cannot be changed here. Changeable: %2.")
+                                            .arg(it.key(), known.mid(1).join(QStringLiteral(", "))));
+        }
+    }
+    if (arguments.size() < 2)
+    {
+        return McpToolResult::error(QStringLiteral("Nothing to change: give at least one of: %1.")
+                                        .arg(known.mid(1).join(QStringLiteral(", "))));
+    }
+
+    VPiece piece = ref.piece;
+    if (arguments.contains(QStringLiteral("name")))
+    {
+        const QString name = stringArg(arguments, "name");
+        if (name.isEmpty())
+        {
+            return McpToolResult::error(QStringLiteral("'name' must not be empty."));
+        }
+        const QHash<quint32, VPiece> *pieces = qApp->getCurrentData()->DataPieces();
+        for (auto it = pieces->constBegin(); it != pieces->constEnd(); ++it)
+        {
+            if (it.key() != ref.id && it.value().GetName() == name)
+            {
+                return McpToolResult::error(QStringLiteral("A piece named \"%1\" already exists.").arg(name));
+            }
+        }
+        piece.SetName(name);
+    }
+    if (arguments.contains(QStringLiteral("quantity")))
+    {
+        const QJsonValue quantity = arguments.value(QStringLiteral("quantity"));
+        if (!quantity.isDouble() || quantity.toDouble() != qFloor(quantity.toDouble()) || quantity.toDouble() < 1
+            || quantity.toDouble() > 999)
+        {
+            return McpToolResult::error(QStringLiteral("'quantity' must be a whole number from 1 to 999: how many "
+                                                       "pieces to cut."));
+        }
+        piece.GetPatternPieceData().SetQuantity(static_cast<int>(quantity.toDouble()));
+    }
+    if (arguments.contains(QStringLiteral("letter")))
+    {
+        piece.GetPatternPieceData().SetLetter(arguments.value(QStringLiteral("letter")).toString());
+    }
+    if (arguments.contains(QStringLiteral("annotation")))
+    {
+        piece.GetPatternPieceData().SetAnnotation(arguments.value(QStringLiteral("annotation")).toString());
+    }
+    if (arguments.contains(QStringLiteral("on_fold")))
+    {
+        piece.GetPatternPieceData().SetOnFold(arguments.value(QStringLiteral("on_fold")).toBool(false));
+    }
+    if (arguments.contains(QStringLiteral("in_layout")))
+    {
+        piece.setInLayout(arguments.value(QStringLiteral("in_layout")).toBool(true));
+    }
+    if (arguments.contains(QStringLiteral("seam_allowance")) || arguments.contains(QStringLiteral("seam_allowance_width")))
+    {
+        const bool seamAllowance = arguments.contains(QStringLiteral("seam_allowance"))
+                                       ? arguments.value(QStringLiteral("seam_allowance")).toBool(false)
+                                       : piece.hasSeamAllowance();
+        QString width = arguments.value(QStringLiteral("seam_allowance_width")).isDouble()
+                            ? QString::number(arguments.value(QStringLiteral("seam_allowance_width")).toDouble())
+                            : stringArg(arguments, "seam_allowance_width");
+        double value = piece.GetSAWidth();
+        if (width.isEmpty())
+        {
+            width = piece.getSeamAllowanceWidthFormula();
+        }
+        else if (!checkFormula(*ref.data->DataVariables(), QStringLiteral("seam_allowance_width"), width, value, error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (value < 0)
+        {
+            return McpToolResult::error(QStringLiteral("'seam_allowance_width' must not be negative."));
+        }
+        piece.SetSeamAllowance(seamAllowance);
+        piece.setSeamAllowanceWidthFormula(width, value);
+    }
+    return applyPieceChange(ref, piece, QObject::tr("Claude: change piece %1").arg(ref.piece.GetName()),
+                            QStringLiteral("Changed piece \"%1\". Undo restores the old values.")
+                                .arg(piece.GetName()));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::setGrainline(const QJsonObject &arguments)
+{
+    PieceRef ref;
+    QString error;
+    if (!findPiece(arguments, ref, error))
+    {
+        return McpToolResult::error(error);
+    }
+    VPiece piece = ref.piece;
+    VGrainlineData &grainline = piece.GetGrainlineGeometry();
+
+    if (arguments.contains(QStringLiteral("visible")) && !arguments.value(QStringLiteral("visible")).toBool(true))
+    {
+        grainline.SetVisible(false);
+        return applyPieceChange(ref, piece, QObject::tr("Claude: hide grainline of %1").arg(piece.GetName()),
+                                QStringLiteral("Hid the grainline of piece \"%1\".").arg(piece.GetName()));
+    }
+
+    // Defaults: vertical, 60 % of the piece height, an arrow at both ends.
+    const QVector<QPointF> outline = piece.mainPathPoints(ref.data);
+    const QRectF box = QPolygonF(outline).boundingRect();
+    QString angle = arguments.value(QStringLiteral("angle")).isDouble()
+                        ? QString::number(arguments.value(QStringLiteral("angle")).toDouble()) : stringArg(arguments, "angle");
+    QString length = arguments.value(QStringLiteral("length")).isDouble()
+                         ? QString::number(arguments.value(QStringLiteral("length")).toDouble()) : stringArg(arguments, "length");
+    QString arrowLength = arguments.value(QStringLiteral("arrow_length")).isDouble()
+                              ? QString::number(arguments.value(QStringLiteral("arrow_length")).toDouble())
+                              : stringArg(arguments, "arrow_length");
+    if (angle.isEmpty())
+    {
+        angle = QStringLiteral("90");
+    }
+    if (length.isEmpty())
+    {
+        length = QString::number(qRound(qApp->fromPixel(box.height()) * 0.6 * 10) / 10.0);
+    }
+    if (arrowLength.isEmpty())
+    {
+        arrowLength = QString::number(UnitConvertor(5.0, Unit::Mm, qApp->patternUnit()));
+    }
+    const QString arrows = stringArg(arguments, "arrows").isEmpty() ? QStringLiteral("both")
+                                                                      : stringArg(arguments, "arrows").toLower();
+    if (!kArrowTypes.contains(arrows))
+    {
+        return McpToolResult::error(QStringLiteral("'arrows' must be one of: %1.").arg(kArrowTypes.join(QStringLiteral(", "))));
+    }
+
+    double value = 0;
+    const QHash<QString, QSharedPointer<VInternalVariable>> variables = *ref.data->DataVariables();
+    if (!checkFormula(variables, QStringLiteral("angle"), angle, value, error)
+        || !checkFormula(variables, QStringLiteral("length"), length, value, error))
+    {
+        return McpToolResult::error(error);
+    }
+    if (value <= 0)
+    {
+        return McpToolResult::error(QStringLiteral("'length' must be greater than 0."));
+    }
+    const double lengthValue = value;
+    if (!checkFormula(variables, QStringLiteral("arrow_length"), arrowLength, value, error))
+    {
+        return McpToolResult::error(error);
+    }
+
+    grainline.SetVisible(true);
+    grainline.setRotation(angle);
+    grainline.setLength(length);
+    grainline.setArrowLength(arrowLength);
+    grainline.setArrowType(static_cast<ArrowType>(kArrowTypes.indexOf(arrows)));
+    // A grainline without anchor points sits at a position; put it in the middle of the piece, like the piece dialog.
+    grainline.setCenterAnchorPoint(NULL_ID);
+    grainline.setTopAnchorPoint(NULL_ID);
+    grainline.setBottomAnchorPoint(NULL_ID);
+    grainline.SetPos(QPointF(box.center().x(), box.center().y() + qApp->toPixel(lengthValue) / 2.0));
+
+    return applyPieceChange(ref, piece, QObject::tr("Claude: set grainline of %1").arg(piece.GetName()),
+                            QStringLiteral("Set the grainline of piece \"%1\" (angle %2, length %3). Undo removes it.")
+                                .arg(piece.GetName(), angle, length));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::setNotch(const QJsonObject &arguments)
+{
+    PieceRef ref;
+    QString error;
+    if (!findPiece(arguments, ref, error))
+    {
+        return McpToolResult::error(error);
+    }
+    const QJsonValue pointValue = arguments.value(QStringLiteral("point_id"));
+    if (!pointValue.isDouble() || pointValue.toDouble() < 1)
+    {
+        return McpToolResult::error(QStringLiteral("'point_id' is required: the id of a point of the piece's outline "
+                                                   "(the id used in add_piece)."));
+    }
+    const quint32 pointId = static_cast<quint32>(pointValue.toDouble());
+
+    // The piece's nodes are copies of the drawing's points; find the one that belongs to point_id.
+    VPiece piece = ref.piece;
+    int index = -1;
+    for (int i = 0; i < piece.GetPath().nodeCount() && index < 0; ++i)
+    {
+        const VPieceNode node = piece.GetPath().at(i);
+        if (node.GetTypeTool() != Tool::NodePoint)
+        {
+            continue;
+        }
+        try
+        {
+            if (ref.data->GeometricObject<VPointF>(node.GetId())->getIdObject() == pointId)
+            {
+                index = i;
+            }
+        }
+        catch (const VException &)
+        {
+            // not a point of this container
+        }
+    }
+    if (index < 0)
+    {
+        return McpToolResult::error(QStringLiteral("Point %1 is not a point of the outline of piece \"%2\".")
+                                        .arg(pointId).arg(piece.GetName()));
+    }
+    VPieceNode node = piece.GetPath().at(index);
+
+    const bool remove = arguments.contains(QStringLiteral("notch")) && !arguments.value(QStringLiteral("notch")).toBool(true);
+    if (remove)
+    {
+        node.setNotch(false);
+        node.setShowNotch(true);
+        node.setShowSeamlineNotch(true);
+        piece.GetPath()[index] = node;
+        return applyPieceChange(ref, piece, QObject::tr("Claude: remove notch from %1").arg(piece.GetName()),
+                                QStringLiteral("Removed the notch at point %1 of piece \"%2\".").arg(pointId).arg(piece.GetName()));
+    }
+
+    // Defaults come from the program's settings (given in the program's unit).
+    VSettings *settings = qApp->Seamly2DSettings();
+    const Unit settingsUnit = StrToUnits(settings->getUnit());
+    NotchType type = stringToNotchType(settings->getDefaultNotchType());
+    double length = UnitConvertor(settings->getDefaultNotchLength(), settingsUnit, qApp->patternUnit());
+    double width = UnitConvertor(settings->getDefaultNotchWidth(), settingsUnit, qApp->patternUnit());
+    NotchSubType subType = node.isNotch() ? node.getNotchSubType() : NotchSubType::Straightforward;
+    int count = node.isNotch() ? node.getNotchCount() : 1;
+    // A new notch is shown on the seam line, and on the cut line when the piece has a seam allowance: the program's
+    // settings can have both switched off, which would make the notch invisible.
+    bool onCutline = node.isNotch() ? node.showNotch() : piece.hasSeamAllowance();
+    bool onSeamline = node.isNotch() ? node.showSeamlineNotch() : true;
+    if (node.isNotch())
+    {
+        type = node.getNotchType();
+        length = node.getNotchLength();
+        width = node.getNotchWidth();
+    }
+
+    if (arguments.contains(QStringLiteral("type")))
+    {
+        const int i = kNotchTypes.indexOf(stringArg(arguments, "type").toLower());
+        if (i < 0)
+        {
+            return McpToolResult::error(QStringLiteral("'type' must be one of: %1.").arg(kNotchTypes.join(QStringLiteral(", "))));
+        }
+        static const NotchType types[] = {NotchType::Slit, NotchType::TNotch, NotchType::VInternal,
+                                          NotchType::VExternal, NotchType::UNotch, NotchType::Castle, NotchType::Diamond};
+        type = types[i];
+    }
+    if (arguments.contains(QStringLiteral("sub_type")))
+    {
+        const int i = kNotchSubTypes.indexOf(stringArg(arguments, "sub_type").toLower());
+        if (i < 0)
+        {
+            return McpToolResult::error(QStringLiteral("'sub_type' must be one of: %1.").arg(kNotchSubTypes.join(QStringLiteral(", "))));
+        }
+        static const NotchSubType subTypes[] = {NotchSubType::Straightforward, NotchSubType::Bisector,
+                                                NotchSubType::Intersection};
+        subType = subTypes[i];
+    }
+    if (arguments.contains(QStringLiteral("count")))
+    {
+        const double c = arguments.value(QStringLiteral("count")).toDouble(-1);
+        if (c != 1 && c != 2 && c != 3)
+        {
+            return McpToolResult::error(QStringLiteral("'count' must be 1, 2 or 3."));
+        }
+        count = static_cast<int>(c);
+    }
+    if (arguments.contains(QStringLiteral("length")))
+    {
+        length = arguments.value(QStringLiteral("length")).toDouble(-1);
+        if (length <= 0)
+        {
+            return McpToolResult::error(QStringLiteral("'length' must be a number greater than 0."));
+        }
+    }
+    if (arguments.contains(QStringLiteral("width")))
+    {
+        width = arguments.value(QStringLiteral("width")).toDouble(-1);
+        if (width <= 0)
+        {
+            return McpToolResult::error(QStringLiteral("'width' must be a number greater than 0."));
+        }
+    }
+    if (arguments.contains(QStringLiteral("show_on_cutline")))
+    {
+        onCutline = arguments.value(QStringLiteral("show_on_cutline")).toBool(true);
+    }
+    if (arguments.contains(QStringLiteral("show_on_seamline")))
+    {
+        onSeamline = arguments.value(QStringLiteral("show_on_seamline")).toBool(true);
+    }
+
+    node.setNotch(true);
+    node.setNotchType(type);
+    node.setNotchSubType(subType);
+    node.setNotchCount(count);
+    node.setNotchLength(length);
+    node.setNotchWidth(width);
+    node.setShowNotch(onCutline);
+    node.setShowSeamlineNotch(onSeamline);
+    piece.GetPath()[index] = node;
+    return applyPieceChange(ref, piece, QObject::tr("Claude: set notch of %1").arg(piece.GetName()),
+                            QStringLiteral("Set a notch at point %1 of piece \"%2\". Undo restores the old state.")
+                                .arg(pointId).arg(piece.GetName()));
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -2475,6 +2925,110 @@ McpTool PatternEditor::screenshotTool()
                                   {QStringLiteral("minimum"), 200}, {QStringLiteral("maximum"), 2000}}}}}};
     tool.readOnly = true;
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::screenshot(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::updatePieceTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("update_piece");
+    tool.description =
+        QStringLiteral("Changes the properties of a pattern piece (id from list_pieces); give only what changes. "
+                       "'quantity' is how many pieces to cut, 'on_fold' marks a piece that is cut on the fold, "
+                       "'letter' and 'annotation' are shown on the piece label, 'in_layout' decides whether the piece "
+                       "is placed in the layout, 'seam_allowance' / 'seam_allowance_width' turn the seam allowance "
+                       "on or change its width (pattern unit, formula allowed). One Undo step. Refused for locked "
+                       "pieces, an unknown piece, a name that is taken, or an invalid value.");
+    QJsonObject properties;
+    properties.insert(QStringLiteral("piece_id"), idProperty(QStringLiteral("Piece id from list_pieces.")));
+    properties.insert(QStringLiteral("name"), stringProperty(QStringLiteral("New unique name.")));
+    properties.insert(QStringLiteral("quantity"), idProperty(QStringLiteral("How many to cut (1-999).")));
+    properties.insert(QStringLiteral("letter"), stringProperty(QStringLiteral("Letter on the piece label.")));
+    properties.insert(QStringLiteral("annotation"), stringProperty(QStringLiteral("Annotation on the piece label.")));
+    for (const char *key : {"on_fold", "in_layout", "seam_allowance"})
+    {
+        properties.insert(QLatin1String(key), QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")}});
+    }
+    properties.insert(QStringLiteral("seam_allowance_width"),
+                      stringProperty(QStringLiteral("Seam allowance width, number or formula.")));
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::updatePiece(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::setGrainlineTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("set_grainline");
+    tool.description =
+        QStringLiteral("Shows a grainline (the direction of the fabric's threads) on a piece, or hides it with "
+                       "visible=false. Defaults: angle 90 (vertical), length 60 % of the piece height, an arrow at "
+                       "both ends, placed in the middle of the piece. 'angle' and 'length' (pattern unit) may be "
+                       "formulas. One Undo step.");
+    QJsonObject properties;
+    properties.insert(QStringLiteral("piece_id"), idProperty(QStringLiteral("Piece id from list_pieces.")));
+    properties.insert(QStringLiteral("visible"), QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")},
+                                                             {QStringLiteral("description"),
+                                                              QStringLiteral("false hides the grainline (default "
+                                                                             "true).")}});
+    properties.insert(QStringLiteral("angle"), stringProperty(QStringLiteral("Direction in degrees, default 90.")));
+    properties.insert(QStringLiteral("length"), stringProperty(QStringLiteral("Length, number or formula.")));
+    properties.insert(QStringLiteral("arrows"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("both"), QStringLiteral("top"),
+                                                                      QStringLiteral("bottom")}}});
+    properties.insert(QStringLiteral("arrow_length"), stringProperty(QStringLiteral("Size of the arrow heads.")));
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setGrainline(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::setNotchTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("set_notch");
+    tool.description =
+        QStringLiteral("Adds, changes or removes a notch (the small marks that match pieces when sewing) at a point "
+                       "of a piece's outline. 'point_id' is the id of the drawing's point (the one used in "
+                       "add_piece). Without further arguments a notch with the program's default type and size is "
+                       "added; type is slit, t, v_internal, v_external, u, castle or diamond; 'count' 1-3; 'length' "
+                       "and 'width' in the pattern unit; notch=false removes it. One Undo step.");
+    QJsonObject properties;
+    properties.insert(QStringLiteral("piece_id"), idProperty(QStringLiteral("Piece id from list_pieces.")));
+    properties.insert(QStringLiteral("point_id"), idProperty(QStringLiteral("Id of the outline point.")));
+    properties.insert(QStringLiteral("notch"), QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")},
+                                                           {QStringLiteral("description"),
+                                                            QStringLiteral("false removes the notch (default true).")}});
+    properties.insert(QStringLiteral("type"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray::fromStringList(kNotchTypes)}});
+    properties.insert(QStringLiteral("sub_type"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray::fromStringList(kNotchSubTypes)},
+                                  {QStringLiteral("description"),
+                                   QStringLiteral("Direction of the notch: straightforward (default), along the "
+                                                  "bisector of the corner, or at the intersection.")}});
+    properties.insert(QStringLiteral("count"), idProperty(QStringLiteral("1, 2 or 3 marks.")));
+    for (const char *key : {"length", "width"})
+    {
+        properties.insert(QLatin1String(key), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}});
+    }
+    for (const char *key : {"show_on_cutline", "show_on_seamline"})
+    {
+        properties.insert(QLatin1String(key), QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")}});
+    }
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id"),
+                                                                           QStringLiteral("point_id")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setNotch(arguments); };
     return tool;
 }
 

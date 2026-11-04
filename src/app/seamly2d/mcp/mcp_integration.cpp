@@ -43,7 +43,7 @@ const char *const kInstructions =
     "Work like this: first read the current state (get_pattern_info, list_objects). If the pattern has no draft block "
     "yet, create one with add_draft_block (it also sets the unit). Then change the pattern (add_point, add_line, add_curve, add_arc) and "
     "check the result with list_objects. Points refer to earlier points by their id. A drawing becomes a pattern "
-    "piece (what gets laid out and exported) with add_piece, which takes the outline's point ids in order. Call "
+    "piece (what gets laid out and exported) with add_piece, which takes the outline's point ids in order; add the details a cutter needs with set_grainline, set_notch and update_piece (quantity, fold, label texts). Call "
     "fit_view after drawing, use screenshot to look at the result yourself, and show_mode to switch between the draft and piece view, so that the user sees the "
     "result. Save the work with save_pattern and write printable/cuttable files with export_layout; Seamly2D asks the user to confirm writing to a file or folder.";
 }
@@ -209,6 +209,9 @@ void McpIntegration::registerTools()
     m_registry.registerTool(PatternEditor::deleteObjectTool());
     m_registry.registerTool(PatternEditor::addPieceTool());
     m_registry.registerTool(PatternEditor::listPiecesTool());
+    m_registry.registerTool(PatternEditor::updatePieceTool());
+    m_registry.registerTool(PatternEditor::setGrainlineTool());
+    m_registry.registerTool(PatternEditor::setNotchTool());
     m_registry.registerTool(PatternEditor::deletePieceTool());
     m_registry.registerTool(PatternEditor::showModeTool());
     m_registry.registerTool(PatternEditor::exportLayoutTool());

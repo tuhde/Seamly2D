@@ -239,7 +239,7 @@ void TST_McpApp::toolsAreListed()
     const QStringList expected{
         "get_pattern_info", "list_objects", "add_draft_block", "add_point", "add_line", "add_curve", "add_arc",
         "update_object", "delete_object", "list_variables", "set_variable", "delete_variable", "add_piece",
-        "list_pieces", "delete_piece", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
+        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
         "export_layout"};
     for (const QString &name : expected)
     {
@@ -554,6 +554,95 @@ void TST_McpApp::piecesReportAreaAndPerimeter()
     ok(QStringLiteral("show_mode"), obj({{QStringLiteral("mode"), QStringLiteral("draft")}}));
     ok(QStringLiteral("fit_view"), obj({{QStringLiteral("target"), QStringLiteral("block")}}));
     fails(QStringLiteral("fit_view"), obj({{QStringLiteral("target"), QStringLiteral("piece")}, {QStringLiteral("piece_id"), 1}}));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::pieceDetailsAreCuttingInstructions()
+{
+    const QJsonObject front = ok(QStringLiteral("list_pieces")).value(QStringLiteral("pieces")).toArray().at(0).toObject();
+    const int id = front.value(QStringLiteral("id")).toInt();
+    const int pointB = point(QStringLiteral("B")).value(QStringLiteral("id")).toInt();
+    const int pointC = point(QStringLiteral("C")).value(QStringLiteral("id")).toInt();
+    QCOMPARE(front.value(QStringLiteral("quantity")).toInt(), 1);
+    QVERIFY(!front.value(QStringLiteral("grainline")).toObject().value(QStringLiteral("visible")).toBool());
+    QVERIFY(front.value(QStringLiteral("notches")).toArray().isEmpty());
+
+    // Cutting instructions and label texts.
+    QJsonObject changed = ok(QStringLiteral("update_piece"),
+                             obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("quantity"), 2},
+                                  {QStringLiteral("letter"), QStringLiteral("A")}, {QStringLiteral("annotation"), QStringLiteral("cut 2 mirrored")},
+                                  {QStringLiteral("on_fold"), true}}));
+    QCOMPARE(changed.value(QStringLiteral("quantity")).toInt(), 2);
+    QCOMPARE(changed.value(QStringLiteral("letter")).toString(), QStringLiteral("A"));
+    QCOMPARE(changed.value(QStringLiteral("annotation")).toString(), QStringLiteral("cut 2 mirrored"));
+    QVERIFY(changed.value(QStringLiteral("onFold")).toBool());
+    ok(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("on_fold"), false}}));
+    changed = ok(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("seam_allowance_width"), QStringLiteral("1.5")}}));
+    QVERIFY(near(changed.value(QStringLiteral("seamAllowanceWidth")).toDouble(), 1.5));
+    ok(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("seam_allowance_width"), QStringLiteral("1")}}));
+    changed = ok(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("name"), QStringLiteral("Bodice")}}));
+    QCOMPARE(changed.value(QStringLiteral("name")).toString(), QStringLiteral("Bodice"));
+    ok(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("name"), QStringLiteral("Front")}}));
+
+    QVERIFY(fails(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}})).contains(QStringLiteral("Nothing to change")));
+    QVERIFY(fails(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("quantity"), 0}})).contains(QStringLiteral("whole number")));
+    QVERIFY(fails(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("colour"), QStringLiteral("red")}})).contains(QStringLiteral("cannot be changed")));
+    QVERIFY(fails(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("seam_allowance_width"), QStringLiteral("-1")}})).contains(QStringLiteral("negative")));
+    QVERIFY(fails(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("name"), QStringLiteral("")}})).contains(QStringLiteral("empty")));
+    QVERIFY(fails(QStringLiteral("update_piece"), obj({{QStringLiteral("piece_id"), 9999}, {QStringLiteral("quantity"), 1}})).contains(QStringLiteral("no piece")));
+
+    // Grainline: the defaults are vertical, 60 % of the piece height (20 cm) = 12 cm, arrows at both ends.
+    QJsonObject grainline = ok(QStringLiteral("set_grainline"), obj({{QStringLiteral("piece_id"), id}})).value(QStringLiteral("grainline")).toObject();
+    QVERIFY(grainline.value(QStringLiteral("visible")).toBool());
+    QCOMPARE(grainline.value(QStringLiteral("angle")).toString(), QStringLiteral("90"));
+    QCOMPARE(grainline.value(QStringLiteral("length")).toString(), QStringLiteral("12"));
+    grainline = ok(QStringLiteral("set_grainline"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("angle"), QStringLiteral("0")},
+                                                         {QStringLiteral("length"), QStringLiteral("25")}, {QStringLiteral("arrows"), QStringLiteral("top")}}))
+                       .value(QStringLiteral("grainline")).toObject();
+    QCOMPARE(grainline.value(QStringLiteral("angle")).toString(), QStringLiteral("0"));
+    QCOMPARE(grainline.value(QStringLiteral("length")).toString(), QStringLiteral("25"));
+    QVERIFY(!ok(QStringLiteral("set_grainline"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("visible"), false}}))
+                 .value(QStringLiteral("grainline")).toObject().value(QStringLiteral("visible")).toBool());
+    QVERIFY(fails(QStringLiteral("set_grainline"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("arrows"), QStringLiteral("left")}})).contains(QStringLiteral("arrows")));
+    QVERIFY(fails(QStringLiteral("set_grainline"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("length"), QStringLiteral("0")}})).contains(QStringLiteral("greater than 0")));
+    QVERIFY(fails(QStringLiteral("set_grainline"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("angle"), QStringLiteral("x+")}})).contains(QStringLiteral("Invalid formula")));
+    ok(QStringLiteral("set_grainline"), obj({{QStringLiteral("piece_id"), id}}));   // left on, with the defaults
+
+    // Notches: visible by default (on the cut line too, the piece has a seam allowance); change; remove.
+    QJsonArray notches = ok(QStringLiteral("set_notch"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}}))
+                             .value(QStringLiteral("notches")).toArray();
+    QCOMPARE(notches.size(), 1);
+    QCOMPARE(notches.at(0).toObject().value(QStringLiteral("name")).toString(), QStringLiteral("B"));
+    QCOMPARE(notches.at(0).toObject().value(QStringLiteral("count")).toInt(), 1);
+    QVERIFY(notches.at(0).toObject().value(QStringLiteral("onCutline")).toBool());
+    QVERIFY(notches.at(0).toObject().value(QStringLiteral("onSeamline")).toBool());
+    notches = ok(QStringLiteral("set_notch"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB},
+                                                   {QStringLiteral("type"), QStringLiteral("castle")}, {QStringLiteral("count"), 3}}))
+                  .value(QStringLiteral("notches")).toArray();
+    QCOMPARE(notches.size(), 1);
+    QCOMPARE(notches.at(0).toObject().value(QStringLiteral("type")).toString(), QStringLiteral("castle"));
+    QCOMPARE(notches.at(0).toObject().value(QStringLiteral("count")).toInt(), 3);
+    notches = ok(QStringLiteral("set_notch"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}, {QStringLiteral("notch"), false}}))
+                  .value(QStringLiteral("notches")).toArray();
+    QVERIFY(notches.isEmpty());
+
+    const int pointM = point(QStringLiteral("M")).value(QStringLiteral("id")).toInt();   // not on the outline
+    QVERIFY(fails(QStringLiteral("set_notch"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointM}})).contains(QStringLiteral("not a point of the outline")));
+    QVERIFY(fails(QStringLiteral("set_notch"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}, {QStringLiteral("type"), QStringLiteral("zigzag")}})).contains(QStringLiteral("'type' must be one of")));
+    QVERIFY(fails(QStringLiteral("set_notch"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}, {QStringLiteral("count"), 4}})).contains(QStringLiteral("1, 2 or 3")));
+    QVERIFY(fails(QStringLiteral("set_notch"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointB}, {QStringLiteral("length"), -1}})).contains(QStringLiteral("greater than 0")));
+    QVERIFY(fails(QStringLiteral("set_notch"), obj({{QStringLiteral("piece_id"), id}})).contains(QStringLiteral("point_id")));
+    // A notch that stays, so that the save/open round trip has to keep it.
+    notches = ok(QStringLiteral("set_notch"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointC},
+                                                   {QStringLiteral("type"), QStringLiteral("t")}, {QStringLiteral("count"), 2}}))
+                  .value(QStringLiteral("notches")).toArray();
+    QCOMPARE(notches.size(), 1);
+
+    // Everything above is one undo step per call and shows up in list_pieces.
+    const QJsonObject listed = ok(QStringLiteral("list_pieces")).value(QStringLiteral("pieces")).toArray().at(0).toObject();
+    QCOMPARE(listed.value(QStringLiteral("quantity")).toInt(), 2);
+    QCOMPARE(listed.value(QStringLiteral("notches")).toArray().size(), 1);
+    QVERIFY(listed.value(QStringLiteral("grainline")).toObject().value(QStringLiteral("visible")).toBool());
 }
 
 //---------------------------------------------------------------------------------------------------------------------
