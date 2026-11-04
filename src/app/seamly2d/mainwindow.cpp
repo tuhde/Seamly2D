@@ -95,6 +95,11 @@
 #include "../vtools/tools/nodeDetails/anchorpoint_tool.h"
 #include "../vtools/tools/nodeDetails/internal_path_tool.h"
 #include "../vtools/undocommands/addgroup.h"
+#include "mcp/dialog_claude_connection.h"
+#include "mcp/mcp_integration.h"
+#ifdef SEAMLY_HAVE_QTERMWIDGET
+#include "mcp/claude_shell_panel.h"
+#endif
 #include "../vtools/undocommands/rename_draftblock.h"
 #include "../vtools/undocommands/delete_draftblock.h"
 #include "../vtools/undocommands/label/showpointname.h"
@@ -116,6 +121,7 @@
 #include <QSettings>
 #include <QtGlobal>
 #include <QDesktopServices>
+#include <QJsonArray>
 #include <chrono>
 #include <thread>
 #include <QAction>
@@ -179,6 +185,8 @@ MainWindow::MainWindow(QWidget *parent)
     , mouseCoordinates(nullptr)
     , infoToolButton(nullptr)
     , m_statusMessage(new QLabel())
+    , m_mcp(nullptr)
+    , m_mcpStatus(nullptr)
     , isInitialized(false)
     , m_changes(false)
     , patternReadOnly(false)
@@ -310,6 +318,8 @@ MainWindow::MainWindow(QWidget *parent)
 
         // Handle changes made to a measurment file.
         connect(m_watcher, &QFileSystemWatcher::fileChanged, this, &MainWindow::measurementsChanged);
+
+        initializeMcp(); // Optional connection to Claude (off unless the user enables it).
 
         connect(qApp, &QApplication::focusChanged, this, [this](QWidget *old, QWidget *now)
         {
@@ -6766,6 +6776,152 @@ MainWindow::~MainWindow()
     delete m_statusMessage;
     delete doc;
     delete ui;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void MainWindow::initializeMcp()
+{
+    m_mcp = new McpIntegration(this);
+
+    m_mcpStatus = new QLabel(this);
+    m_mcpStatus->setVisible(false);
+    ui->statusBar->addPermanentWidget(m_mcpStatus);
+
+    QAction *action = new QAction(tr("Claude connection..."), this);
+    action->setMenuRole(QAction::NoRole);
+    ui->help_Menu->insertAction(ui->aboutQt_Action, action);
+    connect(action, &QAction::triggered, this, [this]()
+    {
+        DialogClaudeConnection dialog(m_mcp, this);
+        dialog.exec();
+    });
+
+#ifdef SEAMLY_HAVE_QTERMWIDGET
+    // Dockable terminal that runs the Claude Code CLI against this window's MCP server (starts when first shown).
+    ClaudeShellPanel *shell = new ClaudeShellPanel(m_mcp, this);
+    addDockWidget(Qt::RightDockWidgetArea, shell);              // same side as Group Manager / Property Editor
+    tabifyDockWidget(ui->toolProperties_DockWidget, shell);     // ... as one more tab there
+    resizeDocks({shell}, {520}, Qt::Horizontal);
+    shell->hide();
+    // Not toggleViewAction(): the restored window layout can mark the shell as "shown" while its tab is behind
+    // another one. The entry always brings the tab to the front and hides the panel only if it is already in front.
+    QAction *shellAction = new QAction(tr("Claude shell"), this);
+    shellAction->setMenuRole(QAction::NoRole);
+    connect(shellAction, &QAction::triggered, shell, [shell]()
+    {
+        if (shell->isVisible())
+        {
+            shell->hide();
+        }
+        else
+        {
+            shell->show();
+            shell->raise();
+        }
+    });
+    ui->help_Menu->insertAction(ui->aboutQt_Action, shellAction);
+#endif
+
+    connect(m_mcp, &McpIntegration::stateChanged, this, [this]()
+    {
+        const QString text = m_mcp->statusText();
+        m_mcpStatus->setText(text);
+        m_mcpStatus->setVisible(!text.isEmpty());
+    });
+
+    m_mcp->startFromSettings();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpAddDraftBlock(const QString &name, const QString &unit, QString &error)
+{
+    const bool first = draft_block_combobox->count() == 0;
+
+    QString blockName = name.trimmed();
+    if (blockName.isEmpty())
+    {
+        blockName = first ? tr("Draft block 1") : tr("Draft Block %1").arg(draft_block_combobox->count() + 1);
+    }
+    if (draft_block_combobox->findText(blockName) != -1)
+    {
+        error = QStringLiteral("A draft block named \"%1\" already exists.").arg(blockName);
+        return QJsonObject();
+    }
+
+    const QString wantedUnit = unit.trimmed();
+    if (!wantedUnit.isEmpty() && wantedUnit != QLatin1String("mm") && wantedUnit != QLatin1String("cm")
+        && wantedUnit != QLatin1String("inch"))
+    {
+        error = QStringLiteral("Unknown unit \"%1\". Use \"mm\", \"cm\" or \"inch\".").arg(wantedUnit);
+        return QJsonObject();
+    }
+    if (!first && !wantedUnit.isEmpty() && wantedUnit != UnitsToStr(qApp->patternUnit()))
+    {
+        error = QStringLiteral("The pattern unit is \"%1\" and cannot be changed after the first draft block.")
+                    .arg(UnitsToStr(qApp->patternUnit()));
+        return QJsonObject();
+    }
+
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(tr("Claude: add draft block %1").arg(blockName));
+    if (first)
+    {
+        // Same setup as New(): the unit decides how the view and the mouse coordinates are shown.
+        qApp->setPatternUnit(StrToUnits(wantedUnit.isEmpty() ? QStringLiteral("mm") : wantedUnit));
+        VMainGraphicsView::NewSceneRect(draftScene, ui->view);
+        VMainGraphicsView::NewSceneRect(pieceScene, ui->view);
+    }
+    addDraftBlock(blockName);
+    if (first && mouseCoordinates == nullptr && draft_block_combobox->count() > 0)
+    {
+        mouseCoordinates = new MouseCoordinates(qApp->patternUnit());
+        ui->statusBar->addPermanentWidget(mouseCoordinates);
+        m_curFileFormatVersion = VPatternConverter::PatternMaxVer;
+        m_curFileFormatVersionStr = VPatternConverter::PatternMaxVerStr;
+    }
+    stack->endMacro();
+
+    if (draft_block_combobox->findText(blockName) == -1)
+    {
+        error = QStringLiteral("The draft block \"%1\" could not be created.").arg(blockName);
+        return QJsonObject();
+    }
+
+    // The new block's data holds exactly its base point.
+    QJsonObject result{{QStringLiteral("draftBlock"), blockName},
+                       {QStringLiteral("unit"), UnitsToStr(qApp->patternUnit())}};
+    const QHash<quint32, QSharedPointer<VGObject>> *objects = pattern->DataGObjects();
+    for (auto it = objects->constBegin(); it != objects->constEnd(); ++it)
+    {
+        if (it.value()->getType() == GOType::Point)
+        {
+            const QSharedPointer<VPointF> point = pattern->GeometricObject<VPointF>(it.key());
+            result.insert(QStringLiteral("basePoint"),
+                          QJsonObject{{QStringLiteral("id"), static_cast<qint64>(it.key())},
+                                      {QStringLiteral("name"), point->name()},
+                                      {QStringLiteral("x"), qRound64(qApp->fromPixel(point->x()) * 1000.0) / 1000.0},
+                                      {QStringLiteral("y"), qRound64(qApp->fromPixel(point->y()) * 1000.0) / 1000.0}});
+            break;
+        }
+    }
+    return result;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpPatternInfo() const
+{
+    QJsonArray blocks;
+    for (int i = 0; i < draft_block_combobox->count(); ++i)
+    {
+        blocks.append(draft_block_combobox->itemText(i));
+    }
+    return QJsonObject{{QStringLiteral("unit"), UnitsToStr(qApp->patternUnit())},
+                       {QStringLiteral("file"), qApp->getFilePath()},
+                       {QStringLiteral("modified"), doc->IsModified() || !qApp->getUndoStack()->isClean()},
+                       {QStringLiteral("activeDraftBlock"), doc->getActiveDraftBlockName()},
+                       {QStringLiteral("draftBlocks"), blocks},
+                       {QStringLiteral("measurementFile"), doc->MPath()},
+                       {QStringLiteral("geometricObjects"), pattern->DataGObjects()->size()}};
 }
 
 //---------------------------------------------------------------------------------------------------------------------

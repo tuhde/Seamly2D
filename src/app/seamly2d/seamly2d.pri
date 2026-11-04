@@ -2,6 +2,7 @@
 include(dialogs/dialogs.pri)
 include(xml/xml.pri)
 include(core/core.pri)
+include(mcp/mcp.pri)
 
 # ADD TO EACH PATH $$PWD VARIABLE!!!!!!
 # This need for correct working file translations.pro

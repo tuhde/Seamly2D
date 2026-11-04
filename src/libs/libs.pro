@@ -13,6 +13,7 @@ SUBDIRS = \
     vwidgets \
     vtools \
     vformat \
+    vmcp \
     fervor \
     vtest \
     tools

@@ -61,6 +61,7 @@
 #include "core/vcmdexport.h"
 #include "../vmisc/vlockguard.h"
 
+#include <QJsonObject>
 #include <QMap>
 #include <QPointer>
 #include <QSharedPointer>
@@ -70,6 +71,7 @@ namespace Ui
     class MainWindow;
 }
 
+class McpIntegration;
 class VToolOptionsPropertyBrowser;
 class MeasurementDoc;
 class QFileSystemWatcher;
@@ -108,6 +110,14 @@ public:
     virtual ~MainWindow() override;
 
     bool LoadPattern(const QString &fileName, const QString &customMeasureFile = QString());
+
+    /// State of the open pattern for the MCP tool `get_pattern_info` (GUI thread only).
+    QJsonObject mcpPatternInfo() const;
+
+    /// Creates a draft block (with its base point) for the MCP tool `add_draft_block`, without any dialog. For the first
+    /// block of a pattern `unit` ("mm", "cm" or "inch") sets the pattern unit. Returns an empty object and sets `error`
+    /// on failure. GUI thread only.
+    QJsonObject mcpAddDraftBlock(const QString &name, const QString &unit, QString &error);
 
 public slots:
     void processCommandLine();
@@ -296,6 +306,8 @@ private:
     QPointer<MouseCoordinates>        mouseCoordinates;/// @brief pointer to mouse coordinates label.
     QPointer<QToolButton>             infoToolButton;
     QLabel                           *m_statusMessage; /// @brief helpLabel help show tooltip.
+    McpIntegration                   *m_mcp;           /// @brief Model Context Protocol server (Claude connection).
+    QLabel                           *m_mcpStatus;     /// @brief status bar text of the Claude connection.
     bool                              isInitialized;   /// @brief isInitialized true after first show window.
     bool                              m_changes;        /// @brief m_changes true if measurement file was changed.
     bool                              patternReadOnly;
@@ -454,6 +466,7 @@ private:
     void               checkRequiredMeasurements(const MeasurementDoc *m);
 
     void               reopenFilesAfterCrash(QStringList &args);
+    void               initializeMcp();
     void               DoExport(const VCommandLinePtr& expParams);
 
     bool               setSize(const QString &text);

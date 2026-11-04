@@ -249,6 +249,15 @@ DEPENDPATH += $$PWD/../../libs/vformat
 win32:!win32-g++: PRE_TARGETDEPS += $$OUT_PWD/../../libs/vformat/$${DESTDIR}/vformat.lib
 else:unix|win32-g++: PRE_TARGETDEPS += $$OUT_PWD/../../libs/vformat/$${DESTDIR}/libvformat.a
 
+# VMcp static library (Model Context Protocol server, depends on Qt network only)
+unix|win32: LIBS += -L$$OUT_PWD/../../libs/vmcp/$${DESTDIR}/ -lvmcp
+
+INCLUDEPATH += $$PWD/../../libs/vmcp
+DEPENDPATH += $$PWD/../../libs/vmcp
+
+win32:!win32-g++: PRE_TARGETDEPS += $$OUT_PWD/../../libs/vmcp/$${DESTDIR}/vmcp.lib
+else:unix|win32-g++: PRE_TARGETDEPS += $$OUT_PWD/../../libs/vmcp/$${DESTDIR}/libvmcp.a
+
 #VPatternDB static library (depend on vgeometry, vmisc, VLayout)
 unix|win32: LIBS += -L$$OUT_PWD/../../libs/vpatterndb/$${DESTDIR} -lvpatterndb
 

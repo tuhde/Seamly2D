@@ -78,6 +78,9 @@ const QString settingPathsLayout  = QStringLiteral("paths/layout");
 
 const QString settingPatternGraphicalOutput = QStringLiteral("pattern/graphicalOutput");
 
+const QString settingMcpEnabled = QStringLiteral("mcp/enabled");
+const QString settingMcpPort    = QStringLiteral("mcp/port");
+
 const QString settingCommunityServer       = QStringLiteral("community/server");
 const QString settingCommunityServerSecure = QStringLiteral("community/serverSecure");
 const QString settingCommunityUseProxy     = QStringLiteral("community/useProxy");
@@ -178,6 +181,37 @@ void VSettings::SetPathLayout(const QString &value)
     QSettings settings(this->format(), this->scope(), this->organizationName(), this->applicationName());
     settings.setValue(settingPathsLayout, value);
     settings.sync();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+bool VSettings::GetMcpEnabled() const
+{
+    return value(settingMcpEnabled, false).toBool();   // opt-in: off by default
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void VSettings::SetMcpEnabled(const bool &value)
+{
+    setValue(settingMcpEnabled, value);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+quint16 VSettings::GetMcpPort() const
+{
+    const int port = value(settingMcpPort, GetDefMcpPort()).toInt();
+    return (port >= 0 && port <= 65535) ? static_cast<quint16>(port) : GetDefMcpPort();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void VSettings::SetMcpPort(const quint16 &value)
+{
+    setValue(settingMcpPort, value);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+quint16 VSettings::GetDefMcpPort()
+{
+    return 47800;
 }
 
 //---------------------------------------------------------------------------------------------------------------------

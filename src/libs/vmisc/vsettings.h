@@ -89,6 +89,13 @@ public:
     bool           GetGraphicalOutput() const;
     void           SetGraphicalOutput(const bool &value);
 
+    bool           GetMcpEnabled() const;
+    void           SetMcpEnabled(const bool &value);
+
+    quint16        GetMcpPort() const;
+    void           SetMcpPort(const quint16 &value);
+    static quint16 GetDefMcpPort();
+
     QString        GetServer() const;
     void           SetServer(const QString &value);
 

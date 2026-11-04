@@ -119,8 +119,9 @@ void SvgGenerator::removeEmptyGroups(QDomElement &main_group)
         svg_cleaned = true;
         QDomNodeList groups = main_group.elementsByTagName("g");
 
-        for (const QDomNode &node : groups)
+        for (int i = 0; i < groups.size(); ++i)
         {
+            const QDomNode node = groups.at(i);
             QDomElement group = node.toElement();
             if (group.childNodes().isEmpty())
             {
@@ -153,8 +154,9 @@ void SvgGenerator::removeEmptyPaths(QDomElement &main_group)
 {
     QDomNodeList paths = main_group.elementsByTagName("path");
 
-    for (const QDomNode &node : paths)
+    for (int i = 0; i < paths.size(); ++i)
     {
+        const QDomNode node = paths.at(i);
         QDomElement path = node.toElement();
         if (path.attribute("d") == "M0,0" || path.attribute("d").trimmed().isEmpty())
         {
