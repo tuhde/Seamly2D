@@ -1787,6 +1787,35 @@ McpToolResult PatternEditor::updateObject(const QJsonObject &arguments)
                     }
                 }
             }
+            else if (objectType == QLatin1String("triangle"))
+            {
+                const QLineF axisLine(position("axisP1"), position("axisP2"));
+                const QLineF hypotenuse(position("firstPoint"), position("secondPoint"));
+                QPointF crossingPoint;
+                if (merged("axisP1") == merged("axisP2") || merged("firstPoint") == merged("secondPoint")
+                    || axisLine.intersects(hypotenuse, &crossingPoint) == QLineF::NoIntersection)
+                {
+                    problem = QStringLiteral("There would be no such triangle (the axis and the line are parallel, or "
+                                             "a line has no length).");
+                }
+                else
+                {
+                    const QPointF d = hypotenuse.p2() - hypotenuse.p1();
+                    const double t = QPointF::dotProduct(crossingPoint - hypotenuse.p1(), d)
+                                     / qMax(1e-9, QPointF::dotProduct(d, d));
+                    const QPointF found = VToolTriangle::FindPoint(position("axisP1"), position("axisP2"),
+                                                                   position("firstPoint"), position("secondPoint"));
+                    const QLineF toFirst(found, position("firstPoint"));
+                    const QLineF toSecond(found, position("secondPoint"));
+                    const double cosine = (toFirst.dx() * toSecond.dx() + toFirst.dy() * toSecond.dy())
+                                          / qMax(1e-9, toFirst.length() * toSecond.length());
+                    if (t <= 0.0 || t >= 1.0 || found.isNull() || qAbs(cosine) > 0.01)
+                    {
+                        problem = QStringLiteral("There would be no point on the axis that sees the two points at a "
+                                                 "right angle.");
+                    }
+                }
+            }
             else if (objectType == QLatin1String("shoulder"))
             {
                 double lengthValue = 0;

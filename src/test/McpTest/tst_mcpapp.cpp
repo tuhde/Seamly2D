@@ -616,6 +616,12 @@ void TST_McpApp::moreConstructionPointsAreComputed()
                         {QStringLiteral("first_point_id"), a}, {QStringLiteral("second_point_id"), d}, {QStringLiteral("name"), QStringLiteral("T2")}})),
                20 - qSqrt(500.0), 10, 0.1));
 
+    // update_object refuses a change that leaves the triangle without a solution (axis parallel to the hypotenuse).
+    const int t3 = add(obj({{QStringLiteral("type"), QStringLiteral("triangle")}, {QStringLiteral("axis_point1_id"), e1}, {QStringLiteral("axis_point2_id"), f1},
+                            {QStringLiteral("first_point_id"), a}, {QStringLiteral("second_point_id"), d}, {QStringLiteral("name"), QStringLiteral("T3")}})).value(QStringLiteral("id")).toInt();
+    QVERIFY(fails(QStringLiteral("update_object"), obj({{QStringLiteral("id"), t3}, {QStringLiteral("second_point_id"), b}})).contains(QStringLiteral("no such triangle")));
+    QVERIFY(at(point(QStringLiteral("T3")), 20 + qSqrt(500.0), 10, 0.1));
+
     // Constructions that do not exist are refused before anything is created.
     const int before = ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt();
     QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("lineIntersectAxis")}, {QStringLiteral("base_point_id"), a},
