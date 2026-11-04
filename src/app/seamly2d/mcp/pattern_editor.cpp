@@ -78,6 +78,7 @@
 #include "../../libs/vtools/tools/drawTools/vtoolline.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolarc.h"
 #include "../../libs/vtools/tools/nodeDetails/anchorpoint_tool.h"
+#include "../../libs/vtools/tools/nodeDetails/internal_path_tool.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolellipticalarc.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolcubicbezier.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolsplinepath.h"
@@ -2822,8 +2823,7 @@ QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
         try
         {
             const QSharedPointer<VPointF> p = pieceData->GeometricObject<VPointF>(anchor);
-            anchors.append(QJsonObject{{QStringLiteral("pointId"), static_cast<qint64>(p->getIdObject())},
-                                       {QStringLiteral("name"), p->name()}});
+            anchors.append(QJsonObject{{QStringLiteral("name"), p->name()}});
         }
         catch (const VException &)
         {
@@ -3547,6 +3547,7 @@ McpToolResult PatternEditor::addAnchorPoint(const QJsonObject &arguments)
     {
         return McpToolResult::error(QStringLiteral("The anchor point could not be added."));
     }
+    ctx.doc->LiteParseTree(Document::LiteParse);   // the anchor point tool does not refresh the piece itself
     const int count = ctx.data->GetPiece(ref.id).getAnchors().size();
     return McpToolResult::ok(QStringLiteral("Added anchor point %1 to piece \"%2\" (now %3 anchor point(s)). Undo "
                                             "removes it.").arg(pointName, ref.piece.GetName()).arg(count),
@@ -3571,6 +3572,156 @@ McpTool PatternEditor::addAnchorPointTool()
                                                 {QStringLiteral("point_id"), idProperty(QStringLiteral("Id of the point."))}}},
                                    {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id"), QStringLiteral("point_id")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addAnchorPoint(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::addInternalPath(const QJsonObject &arguments)
+{
+    const Context ctx = currentContext();
+    if (!ctx.valid())
+    {
+        return McpToolResult::error(ctx.error);
+    }
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    PieceRef ref;
+    QString error;
+    if (!findPiece(arguments, ref, error))
+    {
+        return McpToolResult::error(error);
+    }
+    const QJsonValue nodesValue = arguments.value(QStringLiteral("nodes"));
+    if (!nodesValue.isArray() || nodesValue.toArray().size() < 2)
+    {
+        return McpToolResult::error(QStringLiteral("'nodes' is required: at least 2 ids of points (and curves between "
+                                                   "them) in the order the path runs."));
+    }
+    const QString lineType = stringArg(arguments, "line_type").isEmpty() ? QStringLiteral("dash")
+                                                                           : stringArg(arguments, "line_type").toLower();
+    static const QMap<QString, Qt::PenStyle> styles{{QStringLiteral("solid"), Qt::SolidLine},
+                                                    {QStringLiteral("dash"), Qt::DashLine},
+                                                    {QStringLiteral("dot"), Qt::DotLine},
+                                                    {QStringLiteral("dash_dot"), Qt::DashDotLine}};
+    if (!styles.contains(lineType))
+    {
+        return McpToolResult::error(QStringLiteral("'line_type' must be one of: solid, dash, dot, dash_dot."));
+    }
+
+    QVector<VPieceNode> nodes;
+    QSet<quint32> used;
+    int pointNodes = 0;
+    const QJsonArray entries = nodesValue.toArray();
+    for (int i = 0; i < entries.size(); ++i)
+    {
+        const QJsonValue idValue = entries.at(i);
+        if (!idValue.isDouble() || idValue.toDouble() < 1 || idValue.toDouble() != qFloor(idValue.toDouble()))
+        {
+            return McpToolResult::error(QStringLiteral("nodes[%1] must be an object id (see list_objects).").arg(i));
+        }
+        const quint32 id = static_cast<quint32>(idValue.toDouble());
+        if (used.contains(id))
+        {
+            return McpToolResult::error(QStringLiteral("Object %1 appears twice in 'nodes'.").arg(id));
+        }
+        used.insert(id);
+        Tool type = Tool::LAST_ONE_DO_NOT_USE;
+        try
+        {
+            const QSharedPointer<VGObject> object = ctx.data->GetGObject(id);
+            type = object.isNull() ? Tool::LAST_ONE_DO_NOT_USE : nodeTypeFor(object->getType());
+        }
+        catch (const VException &)
+        {
+            return McpToolResult::error(QStringLiteral("nodes[%1] = %2 does not exist in the active draft block (see "
+                                                       "list_objects).").arg(i).arg(id));
+        }
+        if (type == Tool::LAST_ONE_DO_NOT_USE)
+        {
+            return McpToolResult::error(QStringLiteral("nodes[%1] = %2 cannot be part of a path (use points, curves "
+                                                       "and arcs).").arg(i).arg(id));
+        }
+        pointNodes += type == Tool::NodePoint ? 1 : 0;
+        nodes.append(VPieceNode(id, type, false));
+    }
+    if (pointNodes < 2)
+    {
+        return McpToolResult::error(QStringLiteral("The path needs at least 2 points."));
+    }
+    for (int i = 1; i < nodes.size(); ++i)   // curves run from the previous point: flip them if they run backwards
+    {
+        if (nodes.at(i).GetTypeTool() == Tool::NodePoint || nodes.at(i - 1).GetTypeTool() != Tool::NodePoint)
+        {
+            continue;
+        }
+        const QSharedPointer<VAbstractCurve> curve = ctx.data->GeometricObject<VAbstractCurve>(nodes.at(i).GetId());
+        const QPointF from = static_cast<QPointF>(*ctx.data->GeometricObject<VPointF>(nodes.at(i - 1).GetId()));
+        nodes[i].SetReverse(QLineF(from, curve->getLastPoint()).length() < QLineF(from, curve->getFirstPoint()).length());
+    }
+
+    VPiecePath path;
+    path.setType(PiecePathType::InternalPath);
+    path.setNodes(nodes);
+    path.setName(stringArg(arguments, "name").isEmpty() ? QStringLiteral("Internal path") : stringArg(arguments, "name"));
+    path.setLineType(styles.value(lineType));
+    path.setLineColor(ColorBlack);
+    path.setLineWeight(DefaultLineWeight);
+    path.setCutPath(arguments.value(QStringLiteral("cut")).toBool(false));
+
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(QObject::tr("Claude: add internal path to %1").arg(ref.piece.GetName()));   // ended by the tool
+    InternalPathTool *created = nullptr;
+    try
+    {
+        path.setNodes(ToolAccess::PrepareNodes(path, window->mcpPieceScene(), ctx.doc, ctx.data));
+        created = InternalPathTool::Create(NULL_ID, path, ref.id, window->mcpPieceScene(), ctx.doc, ctx.data,
+                                           Document::FullParse, Source::FromGui);
+    }
+    catch (const VException &e)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("Could not add the internal path: %1").arg(e.ErrorMessage()));
+    }
+    if (created == nullptr)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("The internal path could not be added."));
+    }
+    window->mcpPiecesChanged();
+    const int count = ctx.data->GetPiece(ref.id).getInternalPaths().size();
+    return McpToolResult::ok(QStringLiteral("Added internal path \"%1\" to piece \"%2\" (now %3 internal path(s)). "
+                                            "Undo removes it.").arg(path.getName(), ref.piece.GetName()).arg(count),
+                             QJsonObject{{QStringLiteral("piece_id"), static_cast<qint64>(ref.id)},
+                                         {QStringLiteral("name"), path.getName()},
+                                         {QStringLiteral("internalPaths"), count}});
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::addInternalPathTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("add_internal_path");
+    tool.description =
+        QStringLiteral("Adds an internal path to a piece: a line drawn inside the piece (a dart, a fold line, a "
+                       "pocket position) through the given points, in order; curves and arcs can be listed between "
+                       "their points. 'line_type' is dash (default), solid, dot or dash_dot; cut=true cuts the "
+                       "piece along the path. One Undo step.");
+    tool.inputSchema = QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("piece_id"), idProperty(QStringLiteral("Piece id from list_pieces."))},
+                     {QStringLiteral("nodes"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("array")},
+                                  {QStringLiteral("items"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}}},
+                                  {QStringLiteral("description"), QStringLiteral("Object ids in path order.")}}},
+                     {QStringLiteral("name"), stringProperty(QStringLiteral("Name of the path."))},
+                     {QStringLiteral("line_type"), stringProperty(QStringLiteral("solid, dash, dot or dash_dot."))},
+                     {QStringLiteral("cut"), QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")}}}}},
+        {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id"), QStringLiteral("nodes")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addInternalPath(arguments); };
     return tool;
 }
 
