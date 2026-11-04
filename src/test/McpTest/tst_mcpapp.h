@@ -51,6 +51,8 @@ private slots:
     void objectsCanBeChangedAndDeleted();
     void curvesAndArcsReportTheirLength();
     void moreConstructionPointsAreComputed();
+    void pathCurvesRunSmoothlyThroughPoints();
+    void circleArcAndCurveIntersectionsAreComputed();
     void piecesReportAreaAndPerimeter();
     void pieceDetailsAreCuttingInstructions();
     void savingAndReopeningGivesTheSamePattern();

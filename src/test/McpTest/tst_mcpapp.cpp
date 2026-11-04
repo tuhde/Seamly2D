@@ -607,6 +607,138 @@ void TST_McpApp::moreConstructionPointsAreComputed()
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::pathCurvesRunSmoothlyThroughPoints()
+{
+    const int a = 1;
+    const int b = point(QStringLiteral("B")).value(QStringLiteral("id")).toInt();
+    const int m = point(QStringLiteral("M")).value(QStringLiteral("id")).toInt();
+    auto addPoint = [this](const QString &name, int base, const QString &length, const QString &angle)
+    {
+        return ok(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("endLine")}, {QStringLiteral("base_point_id"), base},
+                                                    {QStringLiteral("length"), length}, {QStringLiteral("angle"), angle}, {QStringLiteral("name"), name}}))
+            .value(QStringLiteral("id")).toInt();
+    };
+
+    // Three collinear points give a straight line: A, M (middle of A-B) and B, 40 cm.
+    const QJsonObject straight = ok(QStringLiteral("add_curve"), obj({{QStringLiteral("type"), QStringLiteral("path")}, {QStringLiteral("points"), QJsonArray{a, m, b}}}));
+    QCOMPARE(straight.value(QStringLiteral("kind")).toString(), QStringLiteral("path"));
+    QCOMPARE(straight.value(QStringLiteral("points")).toInt(), 3);
+    QVERIFY2(near(straight.value(QStringLiteral("length")).toDouble(), 40.0, 0.05), qPrintable(QJsonDocument(straight).toJson()));
+
+    // A wave through four points is smooth and longer than the chord.
+    const int p2 = addPoint(QStringLiteral("PP2"), a, QStringLiteral("15"), QStringLiteral("20"));
+    const int p3 = addPoint(QStringLiteral("PP3"), a, QStringLiteral("30"), QStringLiteral("340"));
+    const int p4 = addPoint(QStringLiteral("PP4"), a, QStringLiteral("45"), QStringLiteral("10"));
+    const QJsonObject wave = ok(QStringLiteral("add_curve"), obj({{QStringLiteral("type"), QStringLiteral("path")}, {QStringLiteral("points"), QJsonArray{a, p2, p3, p4}}}));
+    QVERIFY(wave.value(QStringLiteral("length")).toDouble() > 45.0);
+    QVERIFY(wave.value(QStringLiteral("length")).toDouble() < 80.0);
+
+    // Per-point control: a bigger handle at PP3 changes the shape (and so the length).
+    const QJsonObject shaped = ok(QStringLiteral("add_curve"),
+                                  obj({{QStringLiteral("type"), QStringLiteral("path")},
+                                       {QStringLiteral("points"), QJsonArray{a, p2, obj({{QStringLiteral("point_id"), p3}, {QStringLiteral("angle"), QStringLiteral("0")},
+                                                                                         {QStringLiteral("length_in"), QStringLiteral("12")}, {QStringLiteral("length_out"), QStringLiteral("12")}}),
+                                                                             p4}}}));
+    QVERIFY(!near(shaped.value(QStringLiteral("length")).toDouble(), wave.value(QStringLiteral("length")).toDouble(), 0.5));
+
+    // The points of the path are visible in list_objects.
+    const QJsonArray splines = objects(obj({{QStringLiteral("ids"), QJsonArray{wave.value(QStringLiteral("id"))}}}));
+    QCOMPARE(splines.size(), 1);
+    const QJsonArray children = splines.at(0).toObject().value(QStringLiteral("children")).toArray();
+    QCOMPARE(children.size(), 4);
+    QCOMPARE(children.at(0).toObject().value(QStringLiteral("pSpline")).toString().toInt(), a);
+    QCOMPARE(children.at(3).toObject().value(QStringLiteral("pSpline")).toString().toInt(), p4);
+
+    // Errors leave everything unchanged.
+    const int before = ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt();
+    QVERIFY(fails(QStringLiteral("add_curve"), obj({{QStringLiteral("type"), QStringLiteral("path")}, {QStringLiteral("points"), QJsonArray{a, m}}})).contains(QStringLiteral("at least 3")));
+    QVERIFY(fails(QStringLiteral("add_curve"), obj({{QStringLiteral("type"), QStringLiteral("path")}, {QStringLiteral("points"), QJsonArray{a, m, m}}})).contains(QStringLiteral("twice")));
+    QVERIFY(fails(QStringLiteral("add_curve"), obj({{QStringLiteral("type"), QStringLiteral("path")}, {QStringLiteral("points"), QJsonArray{a, m, 9999}}})).contains(QStringLiteral("does not exist")));
+    QVERIFY(fails(QStringLiteral("add_curve"), obj({{QStringLiteral("type"), QStringLiteral("path")}, {QStringLiteral("points"), QJsonArray{a, m, obj({{QStringLiteral("point_id"), b}, {QStringLiteral("angle"), QStringLiteral("x+")}})}}})).contains(QStringLiteral("Invalid formula")));
+    QVERIFY(fails(QStringLiteral("add_curve"), obj({{QStringLiteral("type"), QStringLiteral("path")}, {QStringLiteral("points"), QJsonArray{a, m, obj({{QStringLiteral("point_id"), b}, {QStringLiteral("length_in"), QStringLiteral("-3")}})}}})).contains(QStringLiteral("negative")));
+    QCOMPARE(ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt(), before);
+
+    // A path can be deleted like any other object.
+    ok(QStringLiteral("delete_object"), obj({{QStringLiteral("id"), shaped.value(QStringLiteral("id"))}}));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::circleArcAndCurveIntersectionsAreComputed()
+{
+    const int a = 1;
+    const int b = point(QStringLiteral("B")).value(QStringLiteral("id")).toInt();
+    const int m = point(QStringLiteral("M")).value(QStringLiteral("id")).toInt();
+    auto add = [this](const QJsonObject &arguments) { return ok(QStringLiteral("add_point"), arguments); };
+    auto rel = [this](const QJsonObject &p) { return QPointF(p.value(QStringLiteral("x")).toDouble() - m_baseX, p.value(QStringLiteral("y")).toDouble() - m_baseY); };
+    auto isAt = [](const QPointF &p, double x, double y, double tolerance = 0.02) { return near(p.x(), x, tolerance) && near(p.y(), y, tolerance); };
+
+    // Two circles of radius 30 around A and B meet at x = 20, y = +-sqrt(500); the two choices are the two points.
+    const QPointF first = rel(add(obj({{QStringLiteral("type"), QStringLiteral("intersectCircles")}, {QStringLiteral("center1_point_id"), a}, {QStringLiteral("radius1"), QStringLiteral("30")},
+                                       {QStringLiteral("center2_point_id"), b}, {QStringLiteral("radius2"), QStringLiteral("30")}, {QStringLiteral("name"), QStringLiteral("CI1")}})));
+    const QPointF second = rel(add(obj({{QStringLiteral("type"), QStringLiteral("intersectCircles")}, {QStringLiteral("center1_point_id"), a}, {QStringLiteral("radius1"), QStringLiteral("30")},
+                                        {QStringLiteral("center2_point_id"), b}, {QStringLiteral("radius2"), QStringLiteral("30")}, {QStringLiteral("crossing"), QStringLiteral("second")},
+                                        {QStringLiteral("name"), QStringLiteral("CI2")}})));
+    QVERIFY(near(first.x(), 20) && near(second.x(), 20));
+    QVERIFY(near(qAbs(first.y()), qSqrt(500.0)) && near(qAbs(second.y()), qSqrt(500.0)));
+    QVERIFY(first.y() * second.y() < 0);
+
+    // A circle of radius 25 around A meets the vertical segment x = 20 (from M down 40 cm) at y = 15.
+    const int n2 = add(obj({{QStringLiteral("type"), QStringLiteral("endLine")}, {QStringLiteral("base_point_id"), m}, {QStringLiteral("length"), QStringLiteral("40")},
+                            {QStringLiteral("angle"), QStringLiteral("270")}, {QStringLiteral("name"), QStringLiteral("N2")}})).value(QStringLiteral("id")).toInt();
+    QVERIFY(isAt(rel(add(obj({{QStringLiteral("type"), QStringLiteral("intersectCircleLine")}, {QStringLiteral("center_point_id"), a}, {QStringLiteral("radius"), QStringLiteral("25")},
+                              {QStringLiteral("line_point1_id"), m}, {QStringLiteral("line_point2_id"), n2}, {QStringLiteral("name"), QStringLiteral("CL1")}}))), 20, 15));
+
+    // Tangents from B (40, 0) to the circle of radius 10 around A touch it at (2.5, +-sqrt(93.75)).
+    const QPointF t1 = rel(add(obj({{QStringLiteral("type"), QStringLiteral("tangentToCircle")}, {QStringLiteral("center_point_id"), a}, {QStringLiteral("radius"), QStringLiteral("10")},
+                                    {QStringLiteral("tangent_point_id"), b}, {QStringLiteral("name"), QStringLiteral("TC1")}})));
+    const QPointF t2 = rel(add(obj({{QStringLiteral("type"), QStringLiteral("tangentToCircle")}, {QStringLiteral("center_point_id"), a}, {QStringLiteral("radius"), QStringLiteral("10")},
+                                    {QStringLiteral("tangent_point_id"), b}, {QStringLiteral("crossing"), QStringLiteral("second")}, {QStringLiteral("name"), QStringLiteral("TC2")}})));
+    QVERIFY(near(t1.x(), 2.5, 0.02) && near(t2.x(), 2.5, 0.02));
+    QVERIFY(near(qAbs(t1.y()), qSqrt(93.75), 0.02) && t1.y() * t2.y() < 0);
+
+    // Arcs: the quarter circles around A (270-360) and B (180-270), radius 30, meet at (20, sqrt(500)); the other
+    // intersection of their circles is not on the arcs.
+    const int arcA = ok(QStringLiteral("add_arc"), obj({{QStringLiteral("center_point_id"), a}, {QStringLiteral("radius"), QStringLiteral("30")}, {QStringLiteral("start_angle"), QStringLiteral("270")}, {QStringLiteral("end_angle"), QStringLiteral("360")}})).value(QStringLiteral("id")).toInt();
+    const int arcB = ok(QStringLiteral("add_arc"), obj({{QStringLiteral("center_point_id"), b}, {QStringLiteral("radius"), QStringLiteral("30")}, {QStringLiteral("start_angle"), QStringLiteral("180")}, {QStringLiteral("end_angle"), QStringLiteral("270")}})).value(QStringLiteral("id")).toInt();
+    QVERIFY(isAt(rel(add(obj({{QStringLiteral("type"), QStringLiteral("intersectArcs")}, {QStringLiteral("first_arc_id"), arcA}, {QStringLiteral("second_arc_id"), arcB}, {QStringLiteral("name"), QStringLiteral("AI1")}}))),
+                 20, qSqrt(500.0)));
+    // Tangent from B to the arc of radius 10 around A: on the circle and perpendicular to the tangent line.
+    const int arcC = ok(QStringLiteral("add_arc"), obj({{QStringLiteral("center_point_id"), a}, {QStringLiteral("radius"), QStringLiteral("10")}, {QStringLiteral("start_angle"), QStringLiteral("270")}, {QStringLiteral("end_angle"), QStringLiteral("360")}})).value(QStringLiteral("id")).toInt();
+    const QPointF ta = rel(add(obj({{QStringLiteral("type"), QStringLiteral("tangentToArc")}, {QStringLiteral("arc_id"), arcC}, {QStringLiteral("tangent_point_id"), b}, {QStringLiteral("name"), QStringLiteral("TA1")}})));
+    QVERIFY(near(qHypot(ta.x(), ta.y()), 10.0, 0.02));
+    QVERIFY(near(ta.x() * (ta.x() - 40) + ta.y() * ta.y(), 0.0, 0.1));
+
+    // Two curves: the straight spline C-D (y = 20) and a diagonal from A to (40, 40) cross at (20, 20).
+    const int l2 = add(obj({{QStringLiteral("type"), QStringLiteral("endLine")}, {QStringLiteral("base_point_id"), b}, {QStringLiteral("length"), QStringLiteral("40")},
+                            {QStringLiteral("angle"), QStringLiteral("270")}, {QStringLiteral("name"), QStringLiteral("L2")}})).value(QStringLiteral("id")).toInt();
+    const int diagonal = ok(QStringLiteral("add_curve"), obj({{QStringLiteral("type"), QStringLiteral("spline")}, {QStringLiteral("start_point_id"), a}, {QStringLiteral("end_point_id"), l2},
+                                                              {QStringLiteral("angle1"), QStringLiteral("315")}, {QStringLiteral("angle2"), QStringLiteral("135")},
+                                                              {QStringLiteral("length1"), QStringLiteral("10")}, {QStringLiteral("length2"), QStringLiteral("10")}})).value(QStringLiteral("id")).toInt();
+    QVERIFY(isAt(rel(add(obj({{QStringLiteral("type"), QStringLiteral("intersectCurves")}, {QStringLiteral("first_curve_id"), m_straightCurve}, {QStringLiteral("second_curve_id"), diagonal},
+                              {QStringLiteral("name"), QStringLiteral("CC1")}}))), 20, 20));
+
+    // No intersection, no result.
+    const int before = ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt();
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("intersectCircles")}, {QStringLiteral("center1_point_id"), a}, {QStringLiteral("radius1"), QStringLiteral("5")},
+                                                    {QStringLiteral("center2_point_id"), b}, {QStringLiteral("radius2"), QStringLiteral("5")}})).contains(QStringLiteral("do not intersect")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("intersectCircles")}, {QStringLiteral("center1_point_id"), a}, {QStringLiteral("radius1"), QStringLiteral("30")},
+                                                    {QStringLiteral("center2_point_id"), a}, {QStringLiteral("radius2"), QStringLiteral("30")}})).contains(QStringLiteral("different centers")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("intersectCircles")}, {QStringLiteral("center1_point_id"), a}, {QStringLiteral("radius1"), QStringLiteral("30")},
+                                                    {QStringLiteral("center2_point_id"), b}, {QStringLiteral("radius2"), QStringLiteral("30")}, {QStringLiteral("crossing"), QStringLiteral("third")}})).contains(QStringLiteral("\"first\" or \"second\"")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("intersectCircleLine")}, {QStringLiteral("center_point_id"), a}, {QStringLiteral("radius"), QStringLiteral("5")},
+                                                    {QStringLiteral("line_point1_id"), m}, {QStringLiteral("line_point2_id"), n2}})).contains(QStringLiteral("do not meet")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("tangentToCircle")}, {QStringLiteral("center_point_id"), a}, {QStringLiteral("radius"), QStringLiteral("50")},
+                                                    {QStringLiteral("tangent_point_id"), b}})).contains(QStringLiteral("inside the circle")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("intersectArcs")}, {QStringLiteral("first_arc_id"), arcA}, {QStringLiteral("second_arc_id"), arcA}})).contains(QStringLiteral("two different arcs")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("intersectArcs")}, {QStringLiteral("first_arc_id"), arcA}, {QStringLiteral("second_arc_id"), b}})).contains(QStringLiteral("two different arcs")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("tangentToArc")}, {QStringLiteral("arc_id"), b}, {QStringLiteral("tangent_point_id"), a}})).contains(QStringLiteral("not an arc")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("intersectCurves")}, {QStringLiteral("first_curve_id"), m_straightCurve}, {QStringLiteral("second_curve_id"), m_straightCurve}})).contains(QStringLiteral("two different curves")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("intersectCurves")}, {QStringLiteral("first_curve_id"), m_straightCurve}, {QStringLiteral("second_curve_id"), diagonal},
+                                                    {QStringLiteral("vertical"), QStringLiteral("middle")}})).contains(QStringLiteral("\"highest\" or \"lowest\"")));
+    QCOMPARE(ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt(), before);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 void TST_McpApp::piecesReportAreaAndPerimeter()
 {
     const int a = 1;

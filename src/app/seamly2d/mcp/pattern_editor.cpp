@@ -26,6 +26,7 @@
 #include "pattern_editor.h"
 
 #include <QBuffer>
+#include <cmath>
 #include <QGraphicsScene>
 #include <QImage>
 #include <QPainter>
@@ -51,6 +52,7 @@
 #include "../../libs/ifc/xml/vabstractpattern.h"
 #include "../../libs/qmuparser/qmuparsererror.h"
 #include "../../libs/vgeometry/vabstractcurve.h"
+#include "../../libs/vgeometry/varc.h"
 #include "../../libs/vgeometry/vcubicbezier.h"
 #include "../../libs/vgeometry/vpointf.h"
 #include "../../libs/vpatterndb/calculator.h"
@@ -58,6 +60,12 @@
 #include "../../libs/vpatterndb/variables/vinternalvariable.h"
 #include "../../libs/vpatterndb/variables/custom_variable.h"
 #include "../../libs/vpatterndb/variables/vlinelength.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/intersect_arc_line_tool.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/intersect_circles_tool.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/intersect_circletangent_tool.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/vtoolpointfromarcandtangent.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/vtoolpointofintersectionarcs.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/vtoolpointofintersectioncurves.h"
 #include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/point_intersectxy_tool.h"
 #include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/toolcut/vtoolcutarc.h"
 #include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/toolcut/vtoolcutspline.h"
@@ -70,6 +78,7 @@
 #include "../../libs/vtools/tools/drawTools/vtoolline.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolarc.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolcubicbezier.h"
+#include "../../libs/vtools/tools/drawTools/toolcurve/vtoolsplinepath.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolspline.h"
 #include "../../libs/vtools/tools/pattern_piece_tool.h"
 #include "../../libs/vtools/tools/vabstracttool.h"
@@ -316,6 +325,19 @@ McpToolResult PatternEditor::listObjects(const QJsonObject &arguments)
         }
         QJsonObject item{{QStringLiteral("element"), element.tagName()},
                          {QStringLiteral("definition"), definition}};
+        // Child elements, e.g. the points of a path curve (pSpline, angle1, angle2, length1, length2, ...).
+        QJsonArray children;
+        for (QDomNode child = element.firstChild(); !child.isNull(); child = child.nextSibling())
+        {
+            if (child.isElement() && child.toElement().tagName() != QLatin1String("node"))
+            {
+                children.append(attributesOf(child.toElement()));
+            }
+        }
+        if (!children.isEmpty())
+        {
+            item.insert(QStringLiteral("children"), children);
+        }
 
         bool ok = false;
         const quint32 id = element.attribute(QStringLiteral("id")).toUInt(&ok);
@@ -358,7 +380,10 @@ namespace
 const QStringList kAdvancedPointTypes{QStringLiteral("height"), QStringLiteral("lineIntersectAxis"),
                                       QStringLiteral("curveIntersectAxis"), QStringLiteral("cutCurve"),
                                       QStringLiteral("shoulder"), QStringLiteral("triangle"),
-                                      QStringLiteral("intersectXY")};
+                                      QStringLiteral("intersectXY"), QStringLiteral("intersectCircles"),
+                                      QStringLiteral("intersectCircleLine"), QStringLiteral("tangentToCircle"),
+                                      QStringLiteral("intersectArcs"), QStringLiteral("tangentToArc"),
+                                      QStringLiteral("intersectCurves")};
 
 QString formulaArg(const QJsonObject &arguments, const char *key)
 {
@@ -369,6 +394,59 @@ QString formulaArg(const QJsonObject &arguments, const char *key)
 QPointF positionOf(const Context &ctx, quint32 id)
 {
     return static_cast<QPointF>(*ctx.data->GeometricObject<VPointF>(id));
+}
+
+QSharedPointer<VArc> arcOf(const Context &ctx, quint32 id)
+{
+    try
+    {
+        const QSharedPointer<VGObject> object = ctx.data->GetGObject(id);
+        if (!object.isNull() && object->getType() == GOType::Arc)
+        {
+            return ctx.data->GeometricObject<VArc>(id);
+        }
+    }
+    catch (const VException &)
+    {
+    }
+    return QSharedPointer<VArc>();
+}
+
+QSharedPointer<VAbstractCurve> curveOf(const Context &ctx, quint32 id)
+{
+    try
+    {
+        return ctx.data->GeometricObject<VAbstractCurve>(id);
+    }
+    catch (const VException &)
+    {
+    }
+    return QSharedPointer<VAbstractCurve>();
+}
+
+/// Reads an object id argument (not checked for its kind).
+bool idArg(const QJsonObject &arguments, const char *key, quint32 &id, QString &error)
+{
+    const QJsonValue value = arguments.value(QLatin1String(key));
+    if (!value.isDouble() || value.toDouble() < 1 || value.toDouble() != qFloor(value.toDouble()))
+    {
+        error = QStringLiteral("'%1' is required: an object id (see list_objects).").arg(QLatin1String(key));
+        return false;
+    }
+    id = static_cast<quint32>(value.toDouble());
+    return true;
+}
+
+/// "first" / "second" (default first) for the two intersections of circles; sets `error` for anything else.
+CrossCirclesPoint crossingArg(const QJsonObject &arguments, QString &error)
+{
+    const QString crossing = stringArg(arguments, "crossing").isEmpty() ? QStringLiteral("first")
+                                                                          : stringArg(arguments, "crossing").toLower();
+    if (crossing != QLatin1String("first") && crossing != QLatin1String("second"))
+    {
+        error = QStringLiteral("'crossing' must be \"first\" or \"second\" (which of the two intersections).");
+    }
+    return crossing == QLatin1String("second") ? CrossCirclesPoint::SecondPoint : CrossCirclesPoint::FirstPoint;
 }
 } // namespace
 
@@ -393,6 +471,11 @@ McpToolResult PatternEditor::addAdvancedPoint(const QJsonObject &arguments, cons
     double angleValue = 0;
     double lengthValue = 0;
     QString direction = QStringLiteral("forward");
+    QString radius1 = formulaArg(arguments, "radius1").isEmpty() ? formulaArg(arguments, "radius") : formulaArg(arguments, "radius1");
+    QString radius2 = formulaArg(arguments, "radius2");
+    CrossCirclesPoint crossing = CrossCirclesPoint::FirstPoint;
+    VCrossCurvesPoint vCross = VCrossCurvesPoint::HighestPoint;
+    HCrossCurvesPoint hCross = HCrossCurvesPoint::LeftmostPoint;
 
     // --- validate (nothing is changed yet) ---------------------------------------------------------------------------
     if (type == QLatin1String("height"))
@@ -575,6 +658,156 @@ McpToolResult PatternEditor::addAdvancedPoint(const QJsonObject &arguments, cons
             return McpToolResult::error(QStringLiteral("No point on the axis sees the two points at a right angle."));
         }
     }
+    else if (type == QLatin1String("intersectCircles"))
+    {
+        if (!pointArg(ctx, arguments, "center1_point_id", p1, error)
+            || !pointArg(ctx, arguments, "center2_point_id", p2, error)
+            || !checkFormula(variables, QStringLiteral("radius1"), radius1, lengthValue, error)
+            || !checkFormula(variables, QStringLiteral("radius2"), radius2, value, error))
+        {
+            return McpToolResult::error(error);
+        }
+        crossing = crossingArg(arguments, error);
+        if (!error.isEmpty())
+        {
+            return McpToolResult::error(error);
+        }
+        if (p1 == p2 || lengthValue <= 0 || value <= 0)
+        {
+            return McpToolResult::error(QStringLiteral("The two circles need different centers and radii greater "
+                                                       "than 0."));
+        }
+        if (IntersectCirclesTool::FindPoint(positionOf(ctx, p1), positionOf(ctx, p2), qApp->toPixel(lengthValue),
+                                            qApp->toPixel(value), crossing).isNull())
+        {
+            return McpToolResult::error(QStringLiteral("The two circles do not intersect (they are too far apart, or "
+                                                       "one lies inside the other)."));
+        }
+    }
+    else if (type == QLatin1String("intersectCircleLine"))
+    {
+        if (!pointArg(ctx, arguments, "center_point_id", p1, error)
+            || !pointArg(ctx, arguments, "line_point1_id", p2, error)
+            || !pointArg(ctx, arguments, "line_point2_id", p3, error)
+            || !checkFormula(variables, QStringLiteral("radius"), radius1, lengthValue, error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (p2 == p3 || lengthValue <= 0)
+        {
+            return McpToolResult::error(QStringLiteral("The line needs two different points and the radius must be "
+                                                       "greater than 0."));
+        }
+        if (IntersectArcLineTool::FindPoint(qApp->toPixel(lengthValue), positionOf(ctx, p1), positionOf(ctx, p2),
+                                            positionOf(ctx, p3)).isNull())
+        {
+            return McpToolResult::error(QStringLiteral("The circle and the line do not meet."));
+        }
+    }
+    else if (type == QLatin1String("tangentToCircle"))
+    {
+        if (!pointArg(ctx, arguments, "center_point_id", p1, error)
+            || !pointArg(ctx, arguments, "tangent_point_id", p2, error)
+            || !checkFormula(variables, QStringLiteral("radius"), radius1, lengthValue, error))
+        {
+            return McpToolResult::error(error);
+        }
+        crossing = crossingArg(arguments, error);
+        if (!error.isEmpty())
+        {
+            return McpToolResult::error(error);
+        }
+        if (p1 == p2 || lengthValue <= 0)
+        {
+            return McpToolResult::error(QStringLiteral("The point must differ from the center and the radius must be "
+                                                       "greater than 0."));
+        }
+        if (IntersectCircleTangentTool::FindPoint(positionOf(ctx, p2), positionOf(ctx, p1), qApp->toPixel(lengthValue),
+                                                  crossing).isNull())
+        {
+            return McpToolResult::error(QStringLiteral("There is no tangent from this point to the circle: the point "
+                                                       "lies inside the circle."));
+        }
+    }
+    else if (type == QLatin1String("intersectArcs"))
+    {
+        if (!idArg(arguments, "first_arc_id", p1, error) || !idArg(arguments, "second_arc_id", p2, error))
+        {
+            return McpToolResult::error(error);
+        }
+        crossing = crossingArg(arguments, error);
+        if (!error.isEmpty())
+        {
+            return McpToolResult::error(error);
+        }
+        const QSharedPointer<VArc> arc1 = arcOf(ctx, p1);
+        const QSharedPointer<VArc> arc2 = arcOf(ctx, p2);
+        if (arc1.isNull() || arc2.isNull() || p1 == p2)
+        {
+            return McpToolResult::error(QStringLiteral("'first_arc_id' and 'second_arc_id' must be two different arcs "
+                                                       "of the active draft block."));
+        }
+        if (VToolPointOfIntersectionArcs::FindPoint(arc1.data(), arc2.data(), crossing).isNull())
+        {
+            return McpToolResult::error(QStringLiteral("The two arcs do not intersect (the circles do not meet, or "
+                                                       "they meet outside of the arcs)."));
+        }
+    }
+    else if (type == QLatin1String("tangentToArc"))
+    {
+        if (!idArg(arguments, "arc_id", p1, error) || !pointArg(ctx, arguments, "tangent_point_id", p2, error))
+        {
+            return McpToolResult::error(error);
+        }
+        crossing = crossingArg(arguments, error);
+        if (!error.isEmpty())
+        {
+            return McpToolResult::error(error);
+        }
+        const QSharedPointer<VArc> arc = arcOf(ctx, p1);
+        if (arc.isNull())
+        {
+            return McpToolResult::error(QStringLiteral("'arc_id' = %1 is not an arc of the active draft block.").arg(p1));
+        }
+        if (IntersectCircleTangentTool::FindPoint(positionOf(ctx, p2), static_cast<QPointF>(arc->GetCenter()),
+                                                  arc->GetRadius(), crossing).isNull())
+        {
+            return McpToolResult::error(QStringLiteral("There is no tangent from this point to the arc: the point lies "
+                                                       "inside its circle."));
+        }
+    }
+    else if (type == QLatin1String("intersectCurves"))
+    {
+        if (!idArg(arguments, "first_curve_id", p1, error) || !idArg(arguments, "second_curve_id", p2, error))
+        {
+            return McpToolResult::error(error);
+        }
+        const QSharedPointer<VAbstractCurve> c1 = curveOf(ctx, p1);
+        const QSharedPointer<VAbstractCurve> c2 = curveOf(ctx, p2);
+        if (c1.isNull() || c2.isNull() || p1 == p2)
+        {
+            return McpToolResult::error(QStringLiteral("'first_curve_id' and 'second_curve_id' must be two different "
+                                                       "curves or arcs of the active draft block."));
+        }
+        const QString vertical = stringArg(arguments, "vertical").isEmpty() ? QStringLiteral("highest")
+                                                                              : stringArg(arguments, "vertical").toLower();
+        const QString horizontal = stringArg(arguments, "horizontal").isEmpty() ? QStringLiteral("leftmost")
+                                                                                  : stringArg(arguments, "horizontal").toLower();
+        if ((vertical != QLatin1String("highest") && vertical != QLatin1String("lowest"))
+            || (horizontal != QLatin1String("leftmost") && horizontal != QLatin1String("rightmost")))
+        {
+            return McpToolResult::error(QStringLiteral("'vertical' must be \"highest\" or \"lowest\" and "
+                                                       "'horizontal' \"leftmost\" or \"rightmost\" (which crossing "
+                                                       "to take when the curves cross more than once)."));
+        }
+        vCross = vertical == QLatin1String("highest") ? VCrossCurvesPoint::HighestPoint : VCrossCurvesPoint::LowestPoint;
+        hCross = horizontal == QLatin1String("leftmost") ? HCrossCurvesPoint::LeftmostPoint
+                                                         : HCrossCurvesPoint::RightmostPoint;
+        if (VToolPointOfIntersectionCurves::FindPoint(c1->getPoints(), c2->getPoints(), vCross, hCross).isNull())
+        {
+            return McpToolResult::error(QStringLiteral("The two curves do not cross."));
+        }
+    }
     else // intersectXY
     {
         if (!pointArg(ctx, arguments, "x_from_point_id", p1, error)
@@ -645,6 +878,46 @@ McpToolResult PatternEditor::addAdvancedPoint(const QJsonObject &arguments, cons
         {
             VToolTriangle *t = VToolTriangle::Create(0, name, p1, p2, p3, p4, 5, 10, true, ctx.scene, ctx.doc, ctx.data,
                                                      parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("intersectCircles"))
+        {
+            IntersectCirclesTool *t = IntersectCirclesTool::Create(0, name, p1, p2, radius1, radius2, crossing, 5, 10,
+                                                                   true, ctx.scene, ctx.doc, ctx.data, parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("intersectCircleLine"))
+        {
+            IntersectArcLineTool *t = IntersectArcLineTool::Create(0, radius1, p1, p2, p3, name, 5, 10, true, ctx.scene,
+                                                                   ctx.doc, ctx.data, parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("tangentToCircle"))
+        {
+            IntersectCircleTangentTool *t = IntersectCircleTangentTool::Create(0, name, p1, radius1, p2, crossing, 5, 10,
+                                                                               true, ctx.scene, ctx.doc, ctx.data,
+                                                                               parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("intersectArcs"))
+        {
+            VToolPointOfIntersectionArcs *t = VToolPointOfIntersectionArcs::Create(0, name, p1, p2, crossing, 5, 10,
+                                                                                   ctx.scene, ctx.doc, ctx.data, parse,
+                                                                                   from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("tangentToArc"))
+        {
+            VToolPointFromArcAndTangent *t = VToolPointFromArcAndTangent::Create(0, name, p1, p2, crossing, 5, 10, true,
+                                                                                 ctx.scene, ctx.doc, ctx.data, parse,
+                                                                                 from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("intersectCurves"))
+        {
+            VToolPointOfIntersectionCurves *t = VToolPointOfIntersectionCurves::Create(0, name, p1, p2, vCross, hCross, 5,
+                                                                                       10, true, ctx.scene, ctx.doc,
+                                                                                       ctx.data, parse, from);
             newId = t != nullptr ? t->getId() : NULL_ID;
         }
         else
@@ -1804,6 +2077,135 @@ QJsonObject curveJson(VContainer *data, quint32 id, const QString &kind)
 } // namespace
 
 //---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::addPathCurve(const QJsonObject &arguments)
+{
+    const Context ctx = currentContext();
+    if (!ctx.valid())
+    {
+        return McpToolResult::error(ctx.error);
+    }
+    const QJsonValue pointsValue = arguments.value(QStringLiteral("points"));
+    if (!pointsValue.isArray() || pointsValue.toArray().size() < 3)
+    {
+        return McpToolResult::error(QStringLiteral("'points' must be an array with at least 3 entries, in the order the "
+                                                   "curve runs: point ids, or {\"point_id\":..., \"angle\":..., "
+                                                   "\"length_in\":..., \"length_out\":...} (use type spline for two "
+                                                   "points)."));
+    }
+    const QJsonArray entries = pointsValue.toArray();
+    const int n = entries.size();
+
+    // --- read and check the points ---------------------------------------------------------------------------------
+    QVector<quint32> ids;
+    QVector<QPointF> positions;
+    QSet<quint32> seen;
+    QString error;
+    for (int i = 0; i < n; ++i)
+    {
+        const QJsonValue entry = entries.at(i);
+        QJsonObject item = entry.isObject() ? entry.toObject() : QJsonObject{{QStringLiteral("point_id"), entry}};
+        quint32 id = NULL_ID;
+        if (!pointArg(ctx, item, "point_id", id, error))
+        {
+            return McpToolResult::error(QStringLiteral("points[%1]: %2").arg(i).arg(error));
+        }
+        if (seen.contains(id))
+        {
+            return McpToolResult::error(QStringLiteral("points[%1]: point %2 appears twice.").arg(i).arg(id));
+        }
+        seen.insert(id);
+        ids << id;
+        positions << positionOf(ctx, id);
+    }
+
+    // --- tangent directions and handle lengths: smooth defaults, overridable per point -------------------------------
+    // angle1 / angle2 are the directions of the incoming / outgoing handle seen from the point (they point against and
+    // along the direction of travel); length1 / length2 are the handle lengths.
+    QVector<QString> a1(n), a2(n), l1(n), l2(n);
+    const QHash<QString, QSharedPointer<VInternalVariable>> variables = *ctx.data->DataVariables();
+    for (int i = 0; i < n; ++i)
+    {
+        const QJsonObject item = entries.at(i).isObject() ? entries.at(i).toObject() : QJsonObject();
+        const QPointF previous = positions.at(qMax(0, i - 1));
+        const QPointF next = positions.at(qMin(n - 1, i + 1));
+        const double toPrevious = qApp->fromPixel(QLineF(positions.at(i), previous).length());
+        const double toNext = qApp->fromPixel(QLineF(positions.at(i), next).length());
+        QString direction = formulaArg(item, "angle");
+        QString lengthIn = formulaArg(item, "length_in");
+        QString lengthOut = formulaArg(item, "length_out");
+        double value = 0;
+        double directionValue = 0;
+        const bool givenAngle = !direction.isEmpty();
+        if (!givenAngle)
+        {
+            directionValue = QLineF(previous, next).angle();   // along the chord from the previous to the next point
+            direction = QString::number(directionValue, 'f', 3);
+        }
+        else if (!checkFormula(variables, QStringLiteral("points[%1].angle").arg(i), direction, directionValue, error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (lengthIn.isEmpty())
+        {
+            lengthIn = QString::number(toPrevious / 3.0, 'f', 3);
+        }
+        else if (!checkFormula(variables, QStringLiteral("points[%1].length_in").arg(i), lengthIn, value, error))
+        {
+            return McpToolResult::error(error);
+        }
+        else if (value < 0)
+        {
+            return McpToolResult::error(QStringLiteral("points[%1].length_in must not be negative.").arg(i));
+        }
+        if (lengthOut.isEmpty())
+        {
+            lengthOut = QString::number(toNext / 3.0, 'f', 3);
+        }
+        else if (!checkFormula(variables, QStringLiteral("points[%1].length_out").arg(i), lengthOut, value, error))
+        {
+            return McpToolResult::error(error);
+        }
+        else if (value < 0)
+        {
+            return McpToolResult::error(QStringLiteral("points[%1].length_out must not be negative.").arg(i));
+        }
+        a2[i] = direction;   // outgoing handle: along the direction of travel
+        a1[i] = givenAngle ? QStringLiteral("(%1)+180").arg(direction)                  // incoming: the opposite way
+                           : QString::number(std::fmod(directionValue + 180.0, 360.0), 'f', 3);
+        l1[i] = lengthIn;
+        l2[i] = lengthOut;
+    }
+
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(QObject::tr("Claude: add curve"));
+    quint32 newId = NULL_ID;
+    try
+    {
+        VToolSplinePath *tool = VToolSplinePath::Create(0, ids, a1, a2, l1, l2, ColorBlack, LineTypeSolidLine,
+                                                        DefaultLineWeight, 0, ctx.scene, ctx.doc, ctx.data,
+                                                        Document::FullParse, Source::FromGui);
+        newId = tool != nullptr ? tool->getId() : NULL_ID;
+    }
+    catch (const VException &e)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("Could not create the curve: %1").arg(e.ErrorMessage()));
+    }
+    stack->endMacro();
+    if (newId == NULL_ID)
+    {
+        return McpToolResult::error(QStringLiteral("The curve could not be created."));
+    }
+    QJsonObject result = curveJson(ctx.data, newId, QStringLiteral("path"));
+    result.insert(QStringLiteral("points"), n);
+    return McpToolResult::ok(QStringLiteral("Added curve %1 through %2 points (id %3, length %4 %5). Undo removes it.")
+                                 .arg(result.value(QStringLiteral("name")).toString()).arg(n).arg(newId)
+                                 .arg(result.value(QStringLiteral("length")).toDouble())
+                                 .arg(UnitsToStr(qApp->patternUnit())),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::addCurve(const QJsonObject &arguments)
 {
     const Context ctx = currentContext();
@@ -1818,7 +2220,11 @@ McpToolResult PatternEditor::addCurve(const QJsonObject &arguments)
     {
         type = QStringLiteral("spline");
     }
-    const QStringList supported{QStringLiteral("spline"), VToolCubicBezier::ToolType};
+    const QStringList supported{QStringLiteral("spline"), VToolCubicBezier::ToolType, QStringLiteral("path")};
+    if (type == QLatin1String("path"))
+    {
+        return addPathCurve(arguments);
+    }
     if (!supported.contains(type))
     {
         return McpToolResult::error(QStringLiteral("Unsupported curve type \"%1\". Supported: %2.")
@@ -3060,12 +3466,20 @@ McpTool PatternEditor::addCurveTool()
                        "- cubicBezier: a Bezier curve through 'start_point_id' and 'end_point_id' that is pulled "
                        "towards the control points 'control1_point_id' (at the start) and 'control2_point_id' (at "
                        "the end), which must be existing points.\n"
+                       "- path: one smooth curve through three or more existing points in the order given "
+                       "('points'): armholes, necklines, hip curves. Without further input the curve runs smoothly "
+                       "through the points (the direction at each point follows its neighbours, handles are a third "
+                       "of the distance to the neighbour). To shape it, an entry can be {\"point_id\":..., "
+                       "\"angle\": direction of travel at that point in degrees, \"length_in\" / \"length_out\": "
+                       "handle lengths before / after the point (pattern unit, formulas allowed)}; a longer handle "
+                       "makes the curve fuller there. The ends use only the handle that points into the curve.\n"
                        "Errors leave the pattern unchanged.");
     QJsonObject properties;
     properties.insert(QStringLiteral("type"),
                       QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
                                   {QStringLiteral("enum"), QJsonArray{QStringLiteral("spline"),
-                                                                      VToolCubicBezier::ToolType}},
+                                                                      VToolCubicBezier::ToolType,
+                                                                      QStringLiteral("path")}},
                                   {QStringLiteral("description"), QStringLiteral("Kind of curve.")}});
     properties.insert(QStringLiteral("start_point_id"), idProperty(QStringLiteral("Id of the start point.")));
     properties.insert(QStringLiteral("end_point_id"), idProperty(QStringLiteral("Id of the end point.")));
@@ -3073,6 +3487,16 @@ McpTool PatternEditor::addCurveTool()
                       idProperty(QStringLiteral("cubicBezier: id of the first control point.")));
     properties.insert(QStringLiteral("control2_point_id"),
                       idProperty(QStringLiteral("cubicBezier: id of the second control point.")));
+    properties.insert(QStringLiteral("points"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("array")},
+                                  {QStringLiteral("minItems"), 3},
+                                  {QStringLiteral("items"),
+                                   QJsonObject{{QStringLiteral("oneOf"),
+                                                QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}},
+                                                           QJsonObject{{QStringLiteral("type"), QStringLiteral("object")}}}}}},
+                                  {QStringLiteral("description"),
+                                   QStringLiteral("path: the point ids in the order the curve runs; an entry may be "
+                                                  "an object with point_id, angle, length_in, length_out.")}});
     properties.insert(QStringLiteral("angle1"),
                       stringProperty(QStringLiteral("spline: leaving direction at the start, degrees.")));
     properties.insert(QStringLiteral("angle2"),
@@ -3083,9 +3507,7 @@ McpTool PatternEditor::addCurveTool()
                       stringProperty(QStringLiteral("spline: handle length at the end (number or formula).")));
     tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                                    {QStringLiteral("properties"), properties},
-                                   {QStringLiteral("required"),
-                                    QJsonArray{QStringLiteral("type"), QStringLiteral("start_point_id"),
-                                               QStringLiteral("end_point_id")}}};
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("type")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addCurve(arguments); };
     return tool;
 }
@@ -3557,6 +3979,20 @@ McpTool PatternEditor::addPointTool()
                        "the direction axis_point1 -> axis_point2, so swapping the axis points gives the mirror "
                        "solution on the other side.\n"
                        "- intersectXY: the point with the x of 'x_from_point_id' and the y of 'y_from_point_id'.\n"
+                       "- intersectCircles: where the circle around 'center1_point_id' with 'radius1' meets the circle "
+                       "around 'center2_point_id' with 'radius2'; 'crossing' \"first\" (default) or \"second\" "
+                       "chooses one of the two intersections.\n"
+                       "- intersectCircleLine: where the circle around 'center_point_id' with 'radius' meets the line "
+                       "'line_point1_id'-'line_point2_id' (the one on the segment if only one is).\n"
+                       "- tangentToCircle: the point where the tangent from 'tangent_point_id' touches the circle "
+                       "around 'center_point_id' with 'radius'; 'crossing' picks one of the two tangents.\n"
+                       "- intersectArcs: where the two arcs 'first_arc_id' and 'second_arc_id' meet; 'crossing' "
+                       "picks one of two intersections.\n"
+                       "- tangentToArc: the point where the tangent from 'tangent_point_id' touches the arc "
+                       "'arc_id'; 'crossing' picks one of the two tangents.\n"
+                       "- intersectCurves: where the curves or arcs 'first_curve_id' and 'second_curve_id' cross; if "
+                       "they cross more than once 'vertical' (highest, lowest) and 'horizontal' (leftmost, "
+                       "rightmost) choose which crossing.\n"
                        "Call list_objects first to get the ids. Errors (unknown id, bad formula) leave the pattern "
                        "unchanged. Points are not connected by lines unless the tool draws one to its base point; "
                        "use add_line for further edges.");
@@ -3581,7 +4017,9 @@ McpTool PatternEditor::addPointTool()
     properties.insert(QStringLiteral("line2_point1_id"), idProperty(QStringLiteral("lineIntersect: second line, point 1.")));
     properties.insert(QStringLiteral("line2_point2_id"), idProperty(QStringLiteral("lineIntersect: second line, point 2.")));
     for (const char *key : {"line_point1_id", "line_point2_id", "shoulder_point_id", "axis_point1_id",
-                            "axis_point2_id", "x_from_point_id", "y_from_point_id", "curve_id"})
+                            "axis_point2_id", "x_from_point_id", "y_from_point_id", "curve_id", "center1_point_id",
+                            "center2_point_id", "center_point_id", "tangent_point_id", "first_arc_id",
+                            "second_arc_id", "arc_id", "first_curve_id", "second_curve_id"})
     {
         properties.insert(QLatin1String(key), idProperty(QStringLiteral("Used by some of the types above (see the "
                                                                          "type's description).")));
@@ -3591,6 +4029,23 @@ McpTool PatternEditor::addPointTool()
                                   {QStringLiteral("enum"), QJsonArray{QStringLiteral("start"), QStringLiteral("end")}},
                                   {QStringLiteral("description"), QStringLiteral("cutCurve: count the length from "
                                                                                  "the start (default) or the end.")}});
+    for (const char *key : {"radius", "radius1", "radius2"})
+    {
+        properties.insert(QLatin1String(key), stringProperty(QStringLiteral("Radius of the circle (circle types), "
+                                                                             "number or formula, greater than 0.")));
+    }
+    properties.insert(QStringLiteral("crossing"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("first"), QStringLiteral("second")}},
+                                  {QStringLiteral("description"), QStringLiteral("Circle/arc/tangent types: which of "
+                                                                                 "the two solutions (default "
+                                                                                 "first).")}});
+    properties.insert(QStringLiteral("vertical"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("highest"), QStringLiteral("lowest")}}});
+    properties.insert(QStringLiteral("horizontal"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("leftmost"), QStringLiteral("rightmost")}}});
     properties.insert(QStringLiteral("length"),
                       stringProperty(QStringLiteral("endLine, alongLine, normal, bisector, cutCurve, shoulder: number "
                                                     "or formula in the pattern unit. Example: \"10\".")));

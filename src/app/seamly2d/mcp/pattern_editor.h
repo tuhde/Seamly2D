@@ -66,6 +66,9 @@ public:
     static McpToolResult setVariable(const QJsonObject &arguments);
     static McpToolResult deleteVariable(const QJsonObject &arguments);
 
+    /// `add_curve` type path: a smooth curve through three or more points (spline path).
+    static McpToolResult addPathCurve(const QJsonObject &arguments);
+
     /// Tools `add_curve` (spline, cubicBezier) and `add_arc`: curves between existing points, one undo step each.
     static McpToolResult addCurve(const QJsonObject &arguments);
     static McpToolResult addArc(const QJsonObject &arguments);

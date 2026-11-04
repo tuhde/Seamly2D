@@ -60,7 +60,7 @@ Claude learns the tools from the server itself (names, parameters, units, conven
 | Area | Tools |
 |---|---|
 | Look | `get_pattern_info`, `list_objects` (filters: element, type, name, ids), `list_variables`, `list_pieces`, `screenshot` (drawing or window), `show_mode`, `fit_view` (everything, the active draft block, or one piece) |
-| Draw | `add_draft_block` (also sets the unit), `add_point` (endLine, alongLine, normal, bisector, lineIntersect, height, lineIntersectAxis, curveIntersectAxis, cutCurve, shoulder, triangle, intersectXY), `add_line`, `add_curve` (spline, cubicBezier), `add_arc` |
+| Draw | `add_draft_block` (also sets the unit), `add_point` (endLine, alongLine, normal, bisector, lineIntersect, height, lineIntersectAxis, curveIntersectAxis, cutCurve, shoulder, triangle, intersectXY, intersectCircles, intersectCircleLine, tangentToCircle, intersectArcs, tangentToArc, intersectCurves), `add_line`, `add_curve` (spline, cubicBezier, path through three or more points), `add_arc` |
 | Change | `update_object` (name, formulas, referenced points and curves, cut direction, position of the base point), `delete_object`, `set_variable`, `delete_variable` |
 | Pieces | `add_piece` (outline from point and curve ids, optional seam allowance), `update_piece` (quantity, fold, label letter and annotation, seam allowance, name), `set_grainline`, `set_notch` (types, count, size; also removes), `delete_piece` |
 | Files | `save_pattern`, `open_pattern`, `export_layout` (pdf, svg, png, jpg, tif, eps, ps, dxf; arranged on pages or one file per piece) |
@@ -74,8 +74,9 @@ Things worth knowing:
   page, ...) is refused before anything changes, with a message Claude can read and correct.
 - `open_pattern` only works while the window is empty. Opening a file into a window that already holds a pattern
   would start another Seamly2D window that this connection cannot control.
-- Not available yet: the position and look of piece labels, per-node seam allowance, intersections with arcs and
-  circles, elliptical arcs and path curves, editing measurement values.
+- Not available yet: the position and look of piece labels, per-node seam allowance, elliptical arcs, changing a
+  path curve or an intersection/tangent point after creation (delete it and make a new one), editing measurement
+  values.
 
 ## Troubleshooting
 
