@@ -46,6 +46,9 @@ public:
     /// Tool `add_point`: adds one point (endLine, alongLine, normal, bisector, lineIntersect) as one undo step.
     static McpToolResult addPoint(const QJsonObject &arguments);
 
+    /// The point types of `add_point` that need curves, axes or other special input (height, lineIntersectAxis, ...).
+    static McpToolResult addAdvancedPoint(const QJsonObject &arguments, const QString &type, const QString &name);
+
     /// Tool `add_line`: draws a line between two existing points as one undo step.
     static McpToolResult addLine(const QJsonObject &arguments);
 

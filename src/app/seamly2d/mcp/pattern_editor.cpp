@@ -58,6 +58,15 @@
 #include "../../libs/vpatterndb/variables/vinternalvariable.h"
 #include "../../libs/vpatterndb/variables/custom_variable.h"
 #include "../../libs/vpatterndb/variables/vlinelength.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/point_intersectxy_tool.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/toolcut/vtoolcutarc.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/toolcut/vtoolcutspline.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/toolcut/vtoolcutsplinepath.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/toollinepoint/vtoolcurveintersectaxis.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/toollinepoint/vtoolheight.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/toollinepoint/vtoollineintersectaxis.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/toollinepoint/vtoolshoulderpoint.h"
+#include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/vtooltriangle.h"
 #include "../../libs/vtools/tools/drawTools/vtoolline.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolarc.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolcubicbezier.h"
@@ -343,6 +352,325 @@ McpToolResult PatternEditor::listObjects(const QJsonObject &arguments)
                                          {QStringLiteral("objects"), objects}});
 }
 
+namespace
+{
+/// Point types that are created by addAdvancedPoint().
+const QStringList kAdvancedPointTypes{QStringLiteral("height"), QStringLiteral("lineIntersectAxis"),
+                                      QStringLiteral("curveIntersectAxis"), QStringLiteral("cutCurve"),
+                                      QStringLiteral("shoulder"), QStringLiteral("triangle"),
+                                      QStringLiteral("intersectXY")};
+
+QString formulaArg(const QJsonObject &arguments, const char *key)
+{
+    const QJsonValue value = arguments.value(QLatin1String(key));
+    return value.isDouble() ? QString::number(value.toDouble()) : value.toString().trimmed();
+}
+
+QPointF positionOf(const Context &ctx, quint32 id)
+{
+    return static_cast<QPointF>(*ctx.data->GeometricObject<VPointF>(id));
+}
+} // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::addAdvancedPoint(const QJsonObject &arguments, const QString &type, const QString &name)
+{
+    const Context ctx = currentContext();
+    if (!ctx.valid())
+    {
+        return McpToolResult::error(ctx.error);
+    }
+    QString error;
+    const QHash<QString, QSharedPointer<VInternalVariable>> variables = *ctx.data->DataVariables();
+    double value = 0;
+    quint32 base = NULL_ID;
+    quint32 p1 = NULL_ID;
+    quint32 p2 = NULL_ID;
+    quint32 p3 = NULL_ID;
+    quint32 p4 = NULL_ID;
+    QString angle = formulaArg(arguments, "angle");
+    QString length = formulaArg(arguments, "length");
+    double angleValue = 0;
+    double lengthValue = 0;
+    QString direction = QStringLiteral("forward");
+
+    // --- validate (nothing is changed yet) ---------------------------------------------------------------------------
+    if (type == QLatin1String("height"))
+    {
+        if (!pointArg(ctx, arguments, "base_point_id", base, error)
+            || !pointArg(ctx, arguments, "line_point1_id", p1, error)
+            || !pointArg(ctx, arguments, "line_point2_id", p2, error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (p1 == p2)
+        {
+            return McpToolResult::error(QStringLiteral("'line_point1_id' and 'line_point2_id' must differ."));
+        }
+    }
+    else if (type == QLatin1String("lineIntersectAxis"))
+    {
+        if (!pointArg(ctx, arguments, "base_point_id", base, error)
+            || !pointArg(ctx, arguments, "first_point_id", p1, error)
+            || !pointArg(ctx, arguments, "second_point_id", p2, error)
+            || !checkFormula(variables, QStringLiteral("angle"), angle, angleValue, error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (p1 == p2)
+        {
+            return McpToolResult::error(QStringLiteral("'first_point_id' and 'second_point_id' must differ."));
+        }
+        QLineF axis(positionOf(ctx, base), positionOf(ctx, base) + QPointF(100, 0));
+        axis.setAngle(angleValue);
+        if (VToolLineIntersectAxis::FindPoint(axis, QLineF(positionOf(ctx, p1), positionOf(ctx, p2))).isNull())
+        {
+            return McpToolResult::error(QStringLiteral("The axis through the base point at this angle does not cross "
+                                                       "the line (they are parallel)."));
+        }
+    }
+    else if (type == QLatin1String("curveIntersectAxis"))
+    {
+        quint32 curve = NULL_ID;
+        if (!pointArg(ctx, arguments, "base_point_id", base, error)
+            || !checkFormula(variables, QStringLiteral("angle"), angle, angleValue, error))
+        {
+            return McpToolResult::error(error);
+        }
+        const QJsonValue curveValue = arguments.value(QStringLiteral("curve_id"));
+        if (!curveValue.isDouble() || curveValue.toDouble() < 1)
+        {
+            return McpToolResult::error(QStringLiteral("'curve_id' is required: the id of a curve or arc (see "
+                                                       "list_objects)."));
+        }
+        curve = static_cast<quint32>(curveValue.toDouble());
+        QSharedPointer<VAbstractCurve> curveObject;
+        try
+        {
+            curveObject = ctx.data->GeometricObject<VAbstractCurve>(curve);
+        }
+        catch (const VException &)
+        {
+        }
+        if (curveObject.isNull())
+        {
+            return McpToolResult::error(QStringLiteral("'curve_id' = %1 is not a curve or arc of the active draft "
+                                                       "block.").arg(curve));
+        }
+        QPointF crossing;
+        if (!VToolCurveIntersectAxis::FindPoint(positionOf(ctx, base), angleValue, curveObject, &crossing))
+        {
+            return McpToolResult::error(QStringLiteral("The axis through the base point at this angle does not cross "
+                                                       "the curve."));
+        }
+        p1 = curve;
+    }
+    else if (type == QLatin1String("cutCurve"))
+    {
+        const QJsonValue curveValue = arguments.value(QStringLiteral("curve_id"));
+        if (!curveValue.isDouble() || curveValue.toDouble() < 1)
+        {
+            return McpToolResult::error(QStringLiteral("'curve_id' is required: the id of a spline, path or arc (see "
+                                                       "list_objects)."));
+        }
+        p1 = static_cast<quint32>(curveValue.toDouble());
+        QSharedPointer<VGObject> object;
+        try
+        {
+            object = ctx.data->GetGObject(p1);
+        }
+        catch (const VException &)
+        {
+        }
+        const GOType kind = object.isNull() ? GOType::Unknown : object->getType();
+        if (kind != GOType::Spline && kind != GOType::CubicBezier && kind != GOType::SplinePath
+            && kind != GOType::CubicBezierPath && kind != GOType::Arc)
+        {
+            return McpToolResult::error(QStringLiteral("'curve_id' = %1 is not a spline, path or arc of the active "
+                                                       "draft block.").arg(p1));
+        }
+        if (!checkFormula(variables, QStringLiteral("length"), length, lengthValue, error))
+        {
+            return McpToolResult::error(error);
+        }
+        const QString from = stringArg(arguments, "from").isEmpty() ? QStringLiteral("start")
+                                                                      : stringArg(arguments, "from").toLower();
+        if (from != QLatin1String("start") && from != QLatin1String("end"))
+        {
+            return McpToolResult::error(QStringLiteral("'from' must be \"start\" or \"end\"."));
+        }
+        direction = from == QLatin1String("start") ? QStringLiteral("forward") : QStringLiteral("backward");
+        const double curveLength = qApp->fromPixel(ctx.data->GeometricObject<VAbstractCurve>(p1)->GetLength());
+        if (lengthValue <= 0.01 || lengthValue >= curveLength - 0.01)
+        {
+            return McpToolResult::error(QStringLiteral("'length' must be between 0 and the length "
+                                                       "of the curve (%1 %2); it is %3.")
+                                            .arg(curveLength, 0, 'f', 3).arg(UnitsToStr(qApp->patternUnit()))
+                                            .arg(lengthValue));
+        }
+    }
+    else if (type == QLatin1String("shoulder"))
+    {
+        if (!pointArg(ctx, arguments, "line_point1_id", p1, error)
+            || !pointArg(ctx, arguments, "line_point2_id", p2, error)
+            || !pointArg(ctx, arguments, "shoulder_point_id", p3, error)
+            || !checkFormula(variables, QStringLiteral("length"), length, lengthValue, error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (p1 == p2)
+        {
+            return McpToolResult::error(QStringLiteral("'line_point1_id' and 'line_point2_id' must differ."));
+        }
+        // The program falls back to the second line point when no such point exists; report that instead.
+        const QPointF found = VToolShoulderPoint::FindPoint(positionOf(ctx, p1), positionOf(ctx, p2),
+                                                            positionOf(ctx, p3), qApp->toPixel(lengthValue));
+        if (lengthValue <= 0 || found == positionOf(ctx, p2))
+        {
+            return McpToolResult::error(QStringLiteral("There is no point on the extension of the line beyond "
+                                                       "'line_point2_id' at distance %1 from the shoulder point "
+                                                       "(the distance is too short or the line points away).")
+                                            .arg(length));
+        }
+    }
+    else if (type == QLatin1String("triangle"))
+    {
+        if (!pointArg(ctx, arguments, "axis_point1_id", p1, error)
+            || !pointArg(ctx, arguments, "axis_point2_id", p2, error)
+            || !pointArg(ctx, arguments, "first_point_id", p3, error)
+            || !pointArg(ctx, arguments, "second_point_id", p4, error))
+        {
+            return McpToolResult::error(error);
+        }
+        if (p1 == p2 || p3 == p4)
+        {
+            return McpToolResult::error(QStringLiteral("The axis needs two different points, and so does the "
+                                                       "hypotenuse."));
+        }
+        // The program starts where the axis crosses the segment between the two points and walks along the axis until
+        // it sees them at a right angle. Without a crossing inside that segment the result would be meaningless.
+        const QLineF axisLine(positionOf(ctx, p1), positionOf(ctx, p2));
+        const QLineF hypotenuse(positionOf(ctx, p3), positionOf(ctx, p4));
+        QPointF crossing;
+        if (axisLine.intersects(hypotenuse, &crossing) == QLineF::NoIntersection)
+        {
+            return McpToolResult::error(QStringLiteral("There is no such triangle: the axis and the line through the "
+                                                       "two points are parallel."));
+        }
+        const QPointF d = hypotenuse.p2() - hypotenuse.p1();
+        const double t = QPointF::dotProduct(crossing - hypotenuse.p1(), d) / qMax(1e-9, QPointF::dotProduct(d, d));
+        if (t <= 0.0 || t >= 1.0)
+        {
+            return McpToolResult::error(QStringLiteral("The axis must cross the segment between 'first_point_id' and "
+                                                       "'second_point_id' (it crosses the line outside of it)."));
+        }
+        const QPointF found = VToolTriangle::FindPoint(positionOf(ctx, p1), positionOf(ctx, p2), positionOf(ctx, p3),
+                                                       positionOf(ctx, p4));
+        const QLineF toFirst(found, positionOf(ctx, p3));
+        const QLineF toSecond(found, positionOf(ctx, p4));
+        const double cosine = (toFirst.dx() * toSecond.dx() + toFirst.dy() * toSecond.dy())
+                              / qMax(1e-9, toFirst.length() * toSecond.length());
+        if (found.isNull() || qAbs(cosine) > 0.01)
+        {
+            return McpToolResult::error(QStringLiteral("No point on the axis sees the two points at a right angle."));
+        }
+    }
+    else // intersectXY
+    {
+        if (!pointArg(ctx, arguments, "x_from_point_id", p1, error)
+            || !pointArg(ctx, arguments, "y_from_point_id", p2, error))
+        {
+            return McpToolResult::error(error);
+        }
+    }
+
+    // --- create it like the tool dialog does ----------------------------------------------------------------------
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(QObject::tr("Claude: add point %1").arg(name));
+    quint32 newId = NULL_ID;
+    try
+    {
+        const Document parse = Document::FullParse;
+        const Source from = Source::FromGui;
+        if (type == QLatin1String("height"))
+        {
+            VToolHeight *t = VToolHeight::Create(0, name, LineTypeSolidLine, DefaultLineWeight, ColorBlack, base, p1, p2,
+                                                 5, 10, true, ctx.scene, ctx.doc, ctx.data, parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("lineIntersectAxis"))
+        {
+            VToolLineIntersectAxis *t = VToolLineIntersectAxis::Create(0, name, LineTypeSolidLine, DefaultLineWeight,
+                                                                       ColorBlack, angle, base, p1, p2, 5, 10, true,
+                                                                       ctx.scene, ctx.doc, ctx.data, parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("curveIntersectAxis"))
+        {
+            VToolCurveIntersectAxis *t = VToolCurveIntersectAxis::Create(0, name, LineTypeSolidLine, DefaultLineWeight,
+                                                                         ColorBlack, angle, base, p1, 5, 10, true,
+                                                                         ctx.scene, ctx.doc, ctx.data, parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("cutCurve"))
+        {
+            const GOType kind = ctx.data->GetGObject(p1)->getType();
+            if (kind == GOType::Arc)
+            {
+                VToolCutArc *t = VToolCutArc::Create(0, name, direction, length, ColorBlack, p1, 5, 10, true, ctx.scene,
+                                                     ctx.doc, ctx.data, parse, from);
+                newId = t != nullptr ? t->getId() : NULL_ID;
+            }
+            else if (kind == GOType::SplinePath || kind == GOType::CubicBezierPath)
+            {
+                VToolCutSplinePath *t = VToolCutSplinePath::Create(0, name, direction, length, ColorBlack, p1, 5, 10,
+                                                                   true, ctx.scene, ctx.doc, ctx.data, parse, from);
+                newId = t != nullptr ? t->getId() : NULL_ID;
+            }
+            else
+            {
+                VToolCutSpline *t = VToolCutSpline::Create(0, name, direction, length, ColorBlack, p1, 5, 10, true,
+                                                           ctx.scene, ctx.doc, ctx.data, parse, from);
+                newId = t != nullptr ? t->getId() : NULL_ID;
+            }
+        }
+        else if (type == QLatin1String("shoulder"))
+        {
+            VToolShoulderPoint *t = VToolShoulderPoint::Create(0, length, p1, p2, p3, LineTypeSolidLine, DefaultLineWeight,
+                                                               ColorBlack, name, 5, 10, true, ctx.scene, ctx.doc,
+                                                               ctx.data, parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else if (type == QLatin1String("triangle"))
+        {
+            VToolTriangle *t = VToolTriangle::Create(0, name, p1, p2, p3, p4, 5, 10, true, ctx.scene, ctx.doc, ctx.data,
+                                                     parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+        else
+        {
+            PointIntersectXYTool *t = PointIntersectXYTool::Create(0, name, LineTypeSolidLine, DefaultLineWeight,
+                                                                    ColorBlack, p1, p2, 5, 10, true, ctx.scene, ctx.doc,
+                                                                    ctx.data, parse, from);
+            newId = t != nullptr ? t->getId() : NULL_ID;
+        }
+    }
+    catch (const VException &e)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("Could not create the point: %1").arg(e.ErrorMessage()));
+    }
+    stack->endMacro();
+
+    if (newId == NULL_ID)
+    {
+        return McpToolResult::error(QStringLiteral("The point could not be created."));
+    }
+    const QSharedPointer<VPointF> point = ctx.data->GeometricObject<VPointF>(newId);
+    return McpToolResult::ok(QStringLiteral("Added point %1 (id %2). Undo removes it.").arg(point->name()).arg(newId),
+                             pointJson(newId, *point));
+}
+
 //---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::addPoint(const QJsonObject &arguments)
 {
@@ -355,10 +683,24 @@ McpToolResult PatternEditor::addPoint(const QJsonObject &arguments)
     const QString type = stringArg(arguments, "type");
     const QStringList supported{VToolEndLine::ToolType, VToolAlongLine::ToolType, VToolNormal::ToolType,
                                 VToolBisector::ToolType, VToolLineIntersect::ToolType};
+    if (kAdvancedPointTypes.contains(type))
+    {
+        QString name = stringArg(arguments, "name");
+        if (name.isEmpty())
+        {
+            name = ctx.doc->GenerateLabel(LabelType::NewLabel);
+        }
+        else if (!VContainer::IsUnique(name))
+        {
+            return McpToolResult::error(QStringLiteral("The name \"%1\" is already used. Choose another or omit "
+                                                       "'name'.").arg(name));
+        }
+        return addAdvancedPoint(arguments, type, name);
+    }
     if (!supported.contains(type))
     {
         return McpToolResult::error(QStringLiteral("Unsupported point type \"%1\". Supported: %2.")
-                                        .arg(type, supported.join(QStringLiteral(", "))));
+                                        .arg(type, (supported + kAdvancedPointTypes).join(QStringLiteral(", "))));
     }
 
     // --- validate everything before touching the pattern ---------------------------------------------------------
@@ -634,7 +976,7 @@ McpToolResult PatternEditor::fitView(const QJsonObject &arguments)
 namespace
 {
 /// What kind of value an editable attribute holds.
-enum class AttrKind { Text, Formula, Number, Reference };
+enum class AttrKind { Text, Formula, Number, Reference, CurveReference, Direction };
 
 /// One argument of `update_object`: the tool argument, the attribute it sets in the pattern file and its kind.
 struct EditableAttr
@@ -688,6 +1030,46 @@ QVector<EditableAttr> editableAttributes(const QDomElement &element)
                 {"line1_point2_id", "p2Line1", AttrKind::Reference},
                 {"line2_point1_id", "p1Line2", AttrKind::Reference},
                 {"line2_point2_id", "p2Line2", AttrKind::Reference}};
+    }
+    if (type == QLatin1String("height"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"base_point_id", "basePoint", AttrKind::Reference},
+                {"line_point1_id", "p1Line", AttrKind::Reference}, {"line_point2_id", "p2Line", AttrKind::Reference}};
+    }
+    if (type == QLatin1String("lineIntersectAxis"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"angle", "angle", AttrKind::Formula},
+                {"base_point_id", "basePoint", AttrKind::Reference}, {"first_point_id", "p1Line", AttrKind::Reference},
+                {"second_point_id", "p2Line", AttrKind::Reference}};
+    }
+    if (type == QLatin1String("curveIntersectAxis"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"angle", "angle", AttrKind::Formula},
+                {"base_point_id", "basePoint", AttrKind::Reference}, {"curve_id", "curve", AttrKind::CurveReference}};
+    }
+    if (type == QLatin1String("cutSpline") || type == QLatin1String("cutSplinePath") || type == QLatin1String("cutArc"))
+    {
+        const char *curveAttribute = type == QLatin1String("cutArc") ? "arc"
+                                     : type == QLatin1String("cutSplinePath") ? "splinePath" : "spline";
+        return {{"name", "name", AttrKind::Text}, {"length", "length", AttrKind::Formula},
+                {"from", "direction", AttrKind::Direction}, {"curve_id", curveAttribute, AttrKind::CurveReference}};
+    }
+    if (type == QLatin1String("shoulder"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"length", "length", AttrKind::Formula},
+                {"line_point1_id", "p1Line", AttrKind::Reference}, {"line_point2_id", "p2Line", AttrKind::Reference},
+                {"shoulder_point_id", "pShoulder", AttrKind::Reference}};
+    }
+    if (type == QLatin1String("triangle"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"axis_point1_id", "axisP1", AttrKind::Reference},
+                {"axis_point2_id", "axisP2", AttrKind::Reference}, {"first_point_id", "firstPoint", AttrKind::Reference},
+                {"second_point_id", "secondPoint", AttrKind::Reference}};
+    }
+    if (type == QLatin1String("intersectXY"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"x_from_point_id", "firstPoint", AttrKind::Reference},
+                {"y_from_point_id", "secondPoint", AttrKind::Reference}};
     }
     if (type == QLatin1String("single"))   // base point of a draft block
     {
@@ -969,6 +1351,44 @@ McpToolResult PatternEditor::updateObject(const QJsonObject &arguments)
                                                     .arg(QLatin1String(attr.argument)).arg(refId).arg(id));
                 }
                 changes.insert(QLatin1String(attr.attribute), QString::number(refId));
+                break;
+            }
+            case AttrKind::CurveReference:
+            {
+                const QJsonValue curveValue = arguments.value(QLatin1String(attr.argument));
+                const quint32 refId = curveValue.isDouble() ? static_cast<quint32>(curveValue.toDouble()) : NULL_ID;
+                QSharedPointer<VAbstractCurve> curve;
+                try
+                {
+                    curve = ctx.data->GeometricObject<VAbstractCurve>(refId);
+                }
+                catch (const VException &)
+                {
+                }
+                int refPosition = 0;
+                if (curve.isNull() || findElement(calculation, refId, refPosition).isNull())
+                {
+                    return McpToolResult::error(QStringLiteral("'%1' must be the id of a curve or arc of the active "
+                                                               "draft block.").arg(QLatin1String(attr.argument)));
+                }
+                if (refPosition >= position)
+                {
+                    return McpToolResult::error(QStringLiteral("'%1' = %2 comes after object %3; an object can only "
+                                                               "refer to earlier objects.")
+                                                    .arg(QLatin1String(attr.argument)).arg(refId).arg(id));
+                }
+                changes.insert(QLatin1String(attr.attribute), QString::number(refId));
+                break;
+            }
+            case AttrKind::Direction:
+            {
+                const QString from = raw.toString().trimmed().toLower();
+                if (from != QLatin1String("start") && from != QLatin1String("end"))
+                {
+                    return McpToolResult::error(QStringLiteral("'from' must be \"start\" or \"end\"."));
+                }
+                changes.insert(QLatin1String(attr.attribute), from == QLatin1String("start") ? QStringLiteral("forward")
+                                                                                            : QStringLiteral("backward"));
                 break;
             }
         }
@@ -2527,7 +2947,8 @@ McpTool PatternEditor::updateObjectTool()
                        "automatically. One Undo step. Give the object's 'id' plus only the parameters to change; "
                        "the parameters are the same as when the object was created: name, length, angle (formulas "
                        "or numbers), the referenced point ids (base_point_id, second_point_id, first_point_id, "
-                       "vertex_point_id, third_point_id, line1_point1_id, ...), and x/y for the base point of a "
+                       "vertex_point_id, third_point_id, line1_point1_id, line_point1_id, axis_point1_id, curve_id, ...; 'from' "
+                       "\"start\"/\"end\" for cutCurve points), and x/y for the base point of a "
                        "draft block (pattern unit). Which ones apply depends on the object: see its definition in "
                        "list_objects. Errors (bad formula, reference to a later object, a name still used in "
                        "formulas) leave the pattern unchanged.");
@@ -2539,11 +2960,18 @@ McpTool PatternEditor::updateObjectTool()
     properties.insert(QStringLiteral("x"), stringProperty(QStringLiteral("Base point only: x in the pattern unit.")));
     properties.insert(QStringLiteral("y"), stringProperty(QStringLiteral("Base point only: y in the pattern unit.")));
     for (const char *key : {"base_point_id", "first_point_id", "second_point_id", "vertex_point_id", "third_point_id",
-                            "line1_point1_id", "line1_point2_id", "line2_point1_id", "line2_point2_id"})
+                            "line1_point1_id", "line1_point2_id", "line2_point1_id", "line2_point2_id",
+                            "line_point1_id", "line_point2_id", "shoulder_point_id", "axis_point1_id",
+                            "axis_point2_id", "x_from_point_id", "y_from_point_id", "curve_id"})
     {
-        properties.insert(QLatin1String(key), idProperty(QStringLiteral("New referenced point id (an earlier "
-                                                                         "object).")));
+        properties.insert(QLatin1String(key), idProperty(QStringLiteral("New referenced point (or, for curve_id, "
+                                                                         "curve) id: an earlier object.")));
     }
+    properties.insert(QStringLiteral("from"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("start"), QStringLiteral("end")}},
+                                  {QStringLiteral("description"), QStringLiteral("cutCurve points: count from the "
+                                                                                 "start or the end.")}});
     tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                                    {QStringLiteral("properties"), properties},
                                    {QStringLiteral("required"), QJsonArray{QStringLiteral("id")}}};
@@ -3113,15 +3541,32 @@ McpTool PatternEditor::addPointTool()
                        "'first_point_id' - 'vertex_point_id' - 'third_point_id'.\n"
                        "- lineIntersect: crossing point of the line 'line1_point1_id'-'line1_point2_id' with the "
                        "line 'line2_point1_id'-'line2_point2_id' (no length; the lines must not be parallel).\n"
+                       "- height: foot of the perpendicular from 'base_point_id' onto the line "
+                       "'line_point1_id'-'line_point2_id' (the line is extended if needed).\n"
+                       "- lineIntersectAxis: where the line 'first_point_id'-'second_point_id' is crossed by an axis "
+                       "through 'base_point_id' at 'angle' degrees (0 = horizontal to the right).\n"
+                       "- curveIntersectAxis: where the curve or arc 'curve_id' is crossed by an axis through "
+                       "'base_point_id' at 'angle' degrees.\n"
+                       "- cutCurve: the point at 'length' along the spline, path or arc 'curve_id', counted from its "
+                       "start ('from' \"start\", default) or its end (\"end\"); 0 < length < curve length.\n"
+                       "- shoulder: on the line 'line_point1_id' -> 'line_point2_id', beyond line_point2, the point "
+                       "whose distance to 'shoulder_point_id' is 'length' (the classic shoulder point).\n"
+                       "- triangle: a point X on the axis 'axis_point1_id' -> 'axis_point2_id' from which the two points "
+                       "'first_point_id' and 'second_point_id' are seen at a right angle (90 degrees at X). The axis "
+                       "must cross the segment between the two points; X is found by walking from that crossing in "
+                       "the direction axis_point1 -> axis_point2, so swapping the axis points gives the mirror "
+                       "solution on the other side.\n"
+                       "- intersectXY: the point with the x of 'x_from_point_id' and the y of 'y_from_point_id'.\n"
                        "Call list_objects first to get the ids. Errors (unknown id, bad formula) leave the pattern "
                        "unchanged. Points are not connected by lines unless the tool draws one to its base point; "
                        "use add_line for further edges.");
     QJsonObject properties;
     properties.insert(QStringLiteral("type"),
                       QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
-                                  {QStringLiteral("enum"), QJsonArray{VToolEndLine::ToolType, VToolAlongLine::ToolType,
-                                                                      VToolNormal::ToolType, VToolBisector::ToolType,
-                                                                      VToolLineIntersect::ToolType}},
+                                  {QStringLiteral("enum"), QJsonArray::fromStringList(
+                                       QStringList{VToolEndLine::ToolType, VToolAlongLine::ToolType,
+                                                   VToolNormal::ToolType, VToolBisector::ToolType,
+                                                   VToolLineIntersect::ToolType} + kAdvancedPointTypes)},
                                   {QStringLiteral("description"), QStringLiteral("Kind of point to add.")}});
     properties.insert(QStringLiteral("base_point_id"),
                       idProperty(QStringLiteral("endLine, alongLine, normal: id of the point to start from.")));
@@ -3135,12 +3580,24 @@ McpTool PatternEditor::addPointTool()
     properties.insert(QStringLiteral("line1_point2_id"), idProperty(QStringLiteral("lineIntersect: first line, point 2.")));
     properties.insert(QStringLiteral("line2_point1_id"), idProperty(QStringLiteral("lineIntersect: second line, point 1.")));
     properties.insert(QStringLiteral("line2_point2_id"), idProperty(QStringLiteral("lineIntersect: second line, point 2.")));
+    for (const char *key : {"line_point1_id", "line_point2_id", "shoulder_point_id", "axis_point1_id",
+                            "axis_point2_id", "x_from_point_id", "y_from_point_id", "curve_id"})
+    {
+        properties.insert(QLatin1String(key), idProperty(QStringLiteral("Used by some of the types above (see the "
+                                                                         "type's description).")));
+    }
+    properties.insert(QStringLiteral("from"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("start"), QStringLiteral("end")}},
+                                  {QStringLiteral("description"), QStringLiteral("cutCurve: count the length from "
+                                                                                 "the start (default) or the end.")}});
     properties.insert(QStringLiteral("length"),
-                      stringProperty(QStringLiteral("endLine, alongLine, normal, bisector: number or formula in the "
-                                                    "pattern unit. Example: \"10\".")));
+                      stringProperty(QStringLiteral("endLine, alongLine, normal, bisector, cutCurve, shoulder: number "
+                                                    "or formula in the pattern unit. Example: \"10\".")));
     properties.insert(QStringLiteral("angle"),
-                      stringProperty(QStringLiteral("endLine (required), normal (optional): number or formula in "
-                                                    "degrees. Example: \"270\" (straight down).")));
+                      stringProperty(QStringLiteral("endLine (required), normal (optional), lineIntersectAxis and "
+                                                    "curveIntersectAxis (required): number or formula in degrees. "
+                                                    "Example: \"270\" (straight down).")));
     properties.insert(QStringLiteral("name"),
                       stringProperty(QStringLiteral("Optional point name; generated (A1, A2, ...) when omitted.")));
     tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},

@@ -492,6 +492,7 @@ void TST_McpApp::curvesAndArcsReportTheirLength()
                                                               {QStringLiteral("start_angle"), QStringLiteral("270")},
                                                               {QStringLiteral("end_angle"), QStringLiteral("360")}}));
     QVERIFY(near(arc.value(QStringLiteral("length")).toDouble(), M_PI / 2 * 15, 0.01));
+    m_arc = arc.value(QStringLiteral("id")).toInt();
 
     QVERIFY(fails(QStringLiteral("add_arc"), obj({{QStringLiteral("center_point_id"), idA}, {QStringLiteral("radius"), QStringLiteral("0")},
                                                   {QStringLiteral("start_angle"), QStringLiteral("0")}, {QStringLiteral("end_angle"), QStringLiteral("90")}}))
@@ -500,6 +501,109 @@ void TST_McpApp::curvesAndArcsReportTheirLength()
                                             {QStringLiteral("end_point_id"), idC}, {QStringLiteral("angle1"), QStringLiteral("0")},
                                             {QStringLiteral("angle2"), QStringLiteral("0")}, {QStringLiteral("length1"), QStringLiteral("1")},
                                             {QStringLiteral("length2"), QStringLiteral("1")}}));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::moreConstructionPointsAreComputed()
+{
+    // The rectangle A(0,0) B(40,0) C(0,20) D(40,20) from the earlier tests, relative to the base point A; M is the
+    // middle of A-B; the straight spline C-D is 40 cm long and the arc is a quarter circle of radius 15 around A.
+    const int a = 1;
+    const int b = point(QStringLiteral("B")).value(QStringLiteral("id")).toInt();
+    const int c = point(QStringLiteral("C")).value(QStringLiteral("id")).toInt();
+    const int d = point(QStringLiteral("D")).value(QStringLiteral("id")).toInt();
+    const int m = point(QStringLiteral("M")).value(QStringLiteral("id")).toInt();
+    QVERIFY(m_straightCurve > 0 && m_arc > 0);
+    auto add = [this](const QJsonObject &arguments) { return ok(QStringLiteral("add_point"), arguments); };
+    auto at = [this](const QJsonObject &p, double x, double y, double tolerance = 0.02)
+    {
+        const bool good = near(p.value(QStringLiteral("x")).toDouble(), m_baseX + x, tolerance)
+                          && near(p.value(QStringLiteral("y")).toDouble(), m_baseY + y, tolerance);
+        if (!good)
+        {
+            qWarning() << "expected" << x << y << "relative to the base point, got"
+                       << p.value(QStringLiteral("x")).toDouble() - m_baseX
+                       << p.value(QStringLiteral("y")).toDouble() - m_baseY;
+        }
+        return good;
+    };
+
+    // height: foot of the perpendicular from A onto the line B-C.
+    QVERIFY(at(add(obj({{QStringLiteral("type"), QStringLiteral("height")}, {QStringLiteral("base_point_id"), a},
+                        {QStringLiteral("line_point1_id"), b}, {QStringLiteral("line_point2_id"), c},
+                        {QStringLiteral("name"), QStringLiteral("H1")}})), 8, 16));
+    // lineIntersectAxis: the axis from A at 315 degrees (down-right) meets the line B-D (x = 40) at y = 40.
+    QVERIFY(at(add(obj({{QStringLiteral("type"), QStringLiteral("lineIntersectAxis")}, {QStringLiteral("base_point_id"), a},
+                        {QStringLiteral("angle"), QStringLiteral("315")}, {QStringLiteral("first_point_id"), b},
+                        {QStringLiteral("second_point_id"), d}, {QStringLiteral("name"), QStringLiteral("L1")}})), 40, 40));
+    // curveIntersectAxis: straight down from M meets the spline C-D (y = 20) at x = 20.
+    QVERIFY(at(add(obj({{QStringLiteral("type"), QStringLiteral("curveIntersectAxis")}, {QStringLiteral("base_point_id"), m},
+                        {QStringLiteral("angle"), QStringLiteral("270")}, {QStringLiteral("curve_id"), m_straightCurve},
+                        {QStringLiteral("name"), QStringLiteral("K1")}})), 20, 20));
+    // cutCurve: 10 cm from the start / the end of the straight spline, and 10 cm along the quarter circle.
+    const QJsonObject cutStart = add(obj({{QStringLiteral("type"), QStringLiteral("cutCurve")}, {QStringLiteral("curve_id"), m_straightCurve},
+                                          {QStringLiteral("length"), QStringLiteral("10")}, {QStringLiteral("name"), QStringLiteral("U1")}}));
+    QVERIFY(at(cutStart, 10, 20));
+    QVERIFY(at(add(obj({{QStringLiteral("type"), QStringLiteral("cutCurve")}, {QStringLiteral("curve_id"), m_straightCurve},
+                        {QStringLiteral("length"), QStringLiteral("10")}, {QStringLiteral("from"), QStringLiteral("end")},
+                        {QStringLiteral("name"), QStringLiteral("V1")}})), 30, 20));
+    QVERIFY(at(add(obj({{QStringLiteral("type"), QStringLiteral("cutCurve")}, {QStringLiteral("curve_id"), m_arc},
+                        {QStringLiteral("length"), QStringLiteral("10")}, {QStringLiteral("name"), QStringLiteral("W1")}})),
+               15 * qCos(qDegreesToRadians(308.1831)), -15 * qSin(qDegreesToRadians(308.1831))));
+    // shoulder: on the line A->B beyond B, at distance sqrt(60^2 + 20^2) from C: the point (60, 0).
+    QVERIFY(at(add(obj({{QStringLiteral("type"), QStringLiteral("shoulder")}, {QStringLiteral("line_point1_id"), a},
+                        {QStringLiteral("line_point2_id"), b}, {QStringLiteral("shoulder_point_id"), c},
+                        {QStringLiteral("length"), QStringLiteral("63.2456")}, {QStringLiteral("name"), QStringLiteral("S1")}})), 60, 0, 0.05));
+    // intersectXY: the x of B and the y of C.
+    QVERIFY(at(add(obj({{QStringLiteral("type"), QStringLiteral("intersectXY")}, {QStringLiteral("x_from_point_id"), b},
+                        {QStringLiteral("y_from_point_id"), c}, {QStringLiteral("name"), QStringLiteral("X1")}})), 40, 20));
+    // triangle: the axis y = 10 (E1-F1) crosses the segment A-D at x = 20; the points A and D are seen at a right angle
+    // from x = 20 +- sqrt(500), depending on the direction of the axis.
+    const int e1 = add(obj({{QStringLiteral("type"), QStringLiteral("endLine")}, {QStringLiteral("base_point_id"), a}, {QStringLiteral("length"), QStringLiteral("10")},
+                            {QStringLiteral("angle"), QStringLiteral("270")}, {QStringLiteral("name"), QStringLiteral("E1")}})).value(QStringLiteral("id")).toInt();
+    const int f1 = add(obj({{QStringLiteral("type"), QStringLiteral("endLine")}, {QStringLiteral("base_point_id"), b}, {QStringLiteral("length"), QStringLiteral("10")},
+                            {QStringLiteral("angle"), QStringLiteral("270")}, {QStringLiteral("name"), QStringLiteral("F1")}})).value(QStringLiteral("id")).toInt();
+    QVERIFY(at(add(obj({{QStringLiteral("type"), QStringLiteral("triangle")}, {QStringLiteral("axis_point1_id"), e1}, {QStringLiteral("axis_point2_id"), f1},
+                        {QStringLiteral("first_point_id"), a}, {QStringLiteral("second_point_id"), d}, {QStringLiteral("name"), QStringLiteral("T1")}})),
+               20 + qSqrt(500.0), 10, 0.1));
+    QVERIFY(at(add(obj({{QStringLiteral("type"), QStringLiteral("triangle")}, {QStringLiteral("axis_point1_id"), f1}, {QStringLiteral("axis_point2_id"), e1},
+                        {QStringLiteral("first_point_id"), a}, {QStringLiteral("second_point_id"), d}, {QStringLiteral("name"), QStringLiteral("T2")}})),
+               20 - qSqrt(500.0), 10, 0.1));
+
+    // Constructions that do not exist are refused before anything is created.
+    const int before = ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt();
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("lineIntersectAxis")}, {QStringLiteral("base_point_id"), a},
+                                                    {QStringLiteral("angle"), QStringLiteral("0")}, {QStringLiteral("first_point_id"), c},
+                                                    {QStringLiteral("second_point_id"), d}})).contains(QStringLiteral("parallel")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("curveIntersectAxis")}, {QStringLiteral("base_point_id"), a},
+                                                    {QStringLiteral("angle"), QStringLiteral("0")}, {QStringLiteral("curve_id"), m_straightCurve}}))
+                .contains(QStringLiteral("does not cross")));   // the axis y = 0 runs parallel to the spline at y = 20
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("curveIntersectAxis")}, {QStringLiteral("base_point_id"), a},
+                                                    {QStringLiteral("angle"), QStringLiteral("0")}, {QStringLiteral("curve_id"), b}})).contains(QStringLiteral("not a curve")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("cutCurve")}, {QStringLiteral("curve_id"), m_straightCurve},
+                                                    {QStringLiteral("length"), QStringLiteral("40")}})).contains(QStringLiteral("between 0 and")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("cutCurve")}, {QStringLiteral("curve_id"), m_straightCurve},
+                                                    {QStringLiteral("length"), QStringLiteral("5")}, {QStringLiteral("from"), QStringLiteral("middle")}})).contains(QStringLiteral("\"start\" or \"end\"")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("cutCurve")}, {QStringLiteral("curve_id"), b}, {QStringLiteral("length"), QStringLiteral("5")}}))
+                .contains(QStringLiteral("not a spline")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("shoulder")}, {QStringLiteral("line_point1_id"), a},
+                                                    {QStringLiteral("line_point2_id"), b}, {QStringLiteral("shoulder_point_id"), c},
+                                                    {QStringLiteral("length"), QStringLiteral("10")}})).contains(QStringLiteral("no point")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("triangle")}, {QStringLiteral("axis_point1_id"), e1}, {QStringLiteral("axis_point2_id"), f1},
+                                                    {QStringLiteral("first_point_id"), a}, {QStringLiteral("second_point_id"), b}})).contains(QStringLiteral("parallel")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("triangle")}, {QStringLiteral("axis_point1_id"), e1}, {QStringLiteral("axis_point2_id"), f1},
+                                                    {QStringLiteral("first_point_id"), a}, {QStringLiteral("second_point_id"), e1}})).contains(QStringLiteral("must cross the segment")));
+    QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("height")}, {QStringLiteral("base_point_id"), a},
+                                                    {QStringLiteral("line_point1_id"), c}, {QStringLiteral("line_point2_id"), c}})).contains(QStringLiteral("must differ")));
+    QCOMPARE(ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt(), before);
+
+    // They can be changed afterwards like the other points: the cut point follows its length and its direction.
+    const int cutId = cutStart.value(QStringLiteral("id")).toInt();
+    QVERIFY(at(ok(QStringLiteral("update_object"), obj({{QStringLiteral("id"), cutId}, {QStringLiteral("length"), QStringLiteral("25")}})), 25, 20));
+    QVERIFY(at(ok(QStringLiteral("update_object"), obj({{QStringLiteral("id"), cutId}, {QStringLiteral("from"), QStringLiteral("end")}})), 15, 20));
+    QVERIFY(fails(QStringLiteral("update_object"), obj({{QStringLiteral("id"), cutId}, {QStringLiteral("from"), QStringLiteral("middle")}})).contains(QStringLiteral("\"start\" or \"end\"")));
+    QVERIFY(fails(QStringLiteral("update_object"), obj({{QStringLiteral("id"), cutId}, {QStringLiteral("curve_id"), b}})).contains(QStringLiteral("curve or arc")));
+    ok(QStringLiteral("update_object"), obj({{QStringLiteral("id"), cutId}, {QStringLiteral("length"), QStringLiteral("10")}, {QStringLiteral("from"), QStringLiteral("start")}}));
 }
 
 //---------------------------------------------------------------------------------------------------------------------

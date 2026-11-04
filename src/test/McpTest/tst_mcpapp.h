@@ -50,6 +50,7 @@ private slots:
     void variablesDriveTheDrawing();
     void objectsCanBeChangedAndDeleted();
     void curvesAndArcsReportTheirLength();
+    void moreConstructionPointsAreComputed();
     void piecesReportAreaAndPerimeter();
     void pieceDetailsAreCuttingInstructions();
     void savingAndReopeningGivesTheSamePattern();
@@ -78,6 +79,7 @@ private:
     double                      m_baseY = 0;
     int                         m_straightCurve = 0;   ///< spline C-D with handles along the chord
     int                         m_saggingCurve = 0;    ///< spline A-B that sags into the rectangle
+    int                         m_arc = 0;             ///< quarter circle around A, radius 15
 };
 
 #endif // TST_MCPAPP_H
