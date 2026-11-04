@@ -77,6 +77,7 @@
 #include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/vtooltriangle.h"
 #include "../../libs/vtools/tools/drawTools/vtoolline.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolarc.h"
+#include "../../libs/vtools/tools/drawTools/toolcurve/vtoolellipticalarc.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolcubicbezier.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolsplinepath.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolspline.h"
@@ -2384,6 +2385,76 @@ McpToolResult PatternEditor::addArc(const QJsonObject &arguments)
                              result);
 }
 
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::addEllipticalArc(const QJsonObject &arguments)
+{
+    const Context ctx = currentContext();
+    if (!ctx.valid())
+    {
+        return McpToolResult::error(ctx.error);
+    }
+    QString error;
+    quint32 center = NULL_ID;
+    if (!pointArg(ctx, arguments, "center_point_id", center, error))
+    {
+        return McpToolResult::error(error);
+    }
+    QString radius1 = stringArg(arguments, "radius1");
+    QString radius2 = stringArg(arguments, "radius2");
+    QString startAngle = stringArg(arguments, "start_angle");
+    QString endAngle = stringArg(arguments, "end_angle");
+    QString rotation = stringArg(arguments, "rotation_angle");
+    if (rotation.isEmpty())
+    {
+        rotation = QStringLiteral("0");
+    }
+    const QHash<QString, QSharedPointer<VInternalVariable>> variables = *ctx.data->DataVariables();
+    double r1 = 0;
+    double r2 = 0;
+    double ignored = 0;
+    if (!checkFormula(variables, QStringLiteral("radius1"), radius1, r1, error)
+        || !checkFormula(variables, QStringLiteral("radius2"), radius2, r2, error)
+        || !checkFormula(variables, QStringLiteral("start_angle"), startAngle, ignored, error)
+        || !checkFormula(variables, QStringLiteral("end_angle"), endAngle, ignored, error)
+        || !checkFormula(variables, QStringLiteral("rotation_angle"), rotation, ignored, error))
+    {
+        return McpToolResult::error(error);
+    }
+    if (r1 <= 0 || r2 <= 0)
+    {
+        return McpToolResult::error(QStringLiteral("'radius1' and 'radius2' must be greater than 0 (they are %1 and %2).")
+                                        .arg(r1).arg(r2));
+    }
+
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(QObject::tr("Claude: add elliptical arc"));
+    quint32 newId = NULL_ID;
+    try
+    {
+        VToolEllipticalArc *tool = VToolEllipticalArc::Create(0, center, radius1, radius2, startAngle, endAngle,
+                                                              rotation, ColorBlack, LineTypeSolidLine,
+                                                              DefaultLineWeight, ctx.scene, ctx.doc, ctx.data,
+                                                              Document::FullParse, Source::FromGui);
+        newId = tool != nullptr ? tool->getId() : NULL_ID;
+    }
+    catch (const VException &e)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("Could not create the elliptical arc: %1").arg(e.ErrorMessage()));
+    }
+    stack->endMacro();
+    if (newId == NULL_ID)
+    {
+        return McpToolResult::error(QStringLiteral("The elliptical arc could not be created."));
+    }
+    const QJsonObject result = curveJson(ctx.data, newId, QStringLiteral("ellipticalArc"));
+    return McpToolResult::ok(QStringLiteral("Added elliptical arc %1 (id %2, length %3 %4). Undo removes it.")
+                                 .arg(result.value(QStringLiteral("name")).toString()).arg(newId)
+                                 .arg(result.value(QStringLiteral("length")).toDouble())
+                                 .arg(UnitsToStr(qApp->patternUnit())),
+                             result);
+}
+
 namespace
 {
 /// VAbstractTool::PrepareNodes() is protected static; a derived struct that is never instantiated may expose it.
@@ -3705,6 +3776,35 @@ McpTool PatternEditor::addArcTool()
     return tool;
 }
 
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::addEllipticalArcTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("add_elliptical_arc");
+    tool.description =
+        QStringLiteral("Draws an elliptical arc around an existing point; one Undo step. 'radius1' and 'radius2' are "
+                       "the two half axes (pattern unit, formulas allowed, greater than 0). The arc runs "
+                       "counter-clockwise from 'start_angle' to 'end_angle' (degrees on the ellipse, 0 = along the "
+                       "first axis); 'rotation_angle' (default 0) turns the whole ellipse (0 = first axis points right, "
+                       "90 = up).");
+    QJsonObject properties;
+    properties.insert(QStringLiteral("center_point_id"), idProperty(QStringLiteral("Id of the center point.")));
+    properties.insert(QStringLiteral("radius1"), stringProperty(QStringLiteral("First half axis, number or formula.")));
+    properties.insert(QStringLiteral("radius2"), stringProperty(QStringLiteral("Second half axis, number or formula.")));
+    properties.insert(QStringLiteral("start_angle"), stringProperty(QStringLiteral("Start angle in degrees.")));
+    properties.insert(QStringLiteral("end_angle"), stringProperty(QStringLiteral("End angle in degrees.")));
+    properties.insert(QStringLiteral("rotation_angle"), stringProperty(QStringLiteral("Rotation of the ellipse in degrees (default 0).")));
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"),
+                                    QJsonArray{QStringLiteral("center_point_id"), QStringLiteral("radius1"),
+                                               QStringLiteral("radius2"), QStringLiteral("start_angle"),
+                                               QStringLiteral("end_angle")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addEllipticalArc(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 //---------------------------------------------------------------------------------------------------------------------
 McpTool PatternEditor::addPieceTool()
 {

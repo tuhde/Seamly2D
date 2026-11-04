@@ -73,6 +73,7 @@ public:
     /// Tools `add_curve` (spline, cubicBezier) and `add_arc`: curves between existing points, one undo step each.
     static McpToolResult addCurve(const QJsonObject &arguments);
     static McpToolResult addArc(const QJsonObject &arguments);
+    static McpToolResult addEllipticalArc(const QJsonObject &arguments);
 
     /// Tools `add_piece`, `list_pieces`, `delete_piece` and `show_mode` (draft or piece view).
     static McpToolResult addPiece(const QJsonObject &arguments);
@@ -131,6 +132,7 @@ public:
     static McpTool showModeTool();
     static McpTool addCurveTool();
     static McpTool addArcTool();
+    static McpTool addEllipticalArcTool();
     static McpTool listVariablesTool();
     static McpTool setVariableTool();
     static McpTool deleteVariableTool();

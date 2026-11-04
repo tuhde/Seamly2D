@@ -237,7 +237,7 @@ void TST_McpApp::toolsAreListed()
         names << tool.toObject().value(QStringLiteral("name")).toString();
     }
     const QStringList expected{
-        "get_pattern_info", "list_objects", "add_draft_block", "add_point", "add_line", "add_curve", "add_arc",
+        "get_pattern_info", "list_objects", "add_draft_block", "add_point", "add_line", "add_curve", "add_arc", "add_elliptical_arc",
         "update_object", "delete_object", "list_variables", "set_variable", "delete_variable", "add_piece",
         "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
         "export_layout"};
@@ -525,6 +525,14 @@ void TST_McpApp::curvesAndArcsReportTheirLength()
                                                               {QStringLiteral("end_angle"), QStringLiteral("360")}}));
     QVERIFY(near(arc.value(QStringLiteral("length")).toDouble(), M_PI / 2 * 15, 0.01));
     m_arc = arc.value(QStringLiteral("id")).toInt();
+
+    // An elliptical arc with equal half axes is a circular arc; unequal axes make it longer than the short one.
+    const QJsonObject round = ok(QStringLiteral("add_elliptical_arc"), obj({{QStringLiteral("center_point_id"), idA}, {QStringLiteral("radius1"), QStringLiteral("15")}, {QStringLiteral("radius2"), QStringLiteral("15")}, {QStringLiteral("start_angle"), QStringLiteral("0")}, {QStringLiteral("end_angle"), QStringLiteral("90")}}));
+    QVERIFY(near(round.value(QStringLiteral("length")).toDouble(), M_PI / 2 * 15, 0.05));
+    const QJsonObject oval = ok(QStringLiteral("add_elliptical_arc"), obj({{QStringLiteral("center_point_id"), idA}, {QStringLiteral("radius1"), QStringLiteral("30")}, {QStringLiteral("radius2"), QStringLiteral("15")}, {QStringLiteral("start_angle"), QStringLiteral("0")}, {QStringLiteral("end_angle"), QStringLiteral("90")}, {QStringLiteral("rotation_angle"), QStringLiteral("45")}}));
+    QVERIFY(oval.value(QStringLiteral("length")).toDouble() > round.value(QStringLiteral("length")).toDouble());
+    QVERIFY(fails(QStringLiteral("add_elliptical_arc"), obj({{QStringLiteral("center_point_id"), idA}, {QStringLiteral("radius1"), QStringLiteral("0")}, {QStringLiteral("radius2"), QStringLiteral("5")}, {QStringLiteral("start_angle"), QStringLiteral("0")}, {QStringLiteral("end_angle"), QStringLiteral("90")}}))
+                .contains(QStringLiteral("greater than 0")));
 
     QVERIFY(fails(QStringLiteral("add_arc"), obj({{QStringLiteral("center_point_id"), idA}, {QStringLiteral("radius"), QStringLiteral("0")},
                                                   {QStringLiteral("start_angle"), QStringLiteral("0")}, {QStringLiteral("end_angle"), QStringLiteral("90")}}))
