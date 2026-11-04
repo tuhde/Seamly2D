@@ -968,6 +968,9 @@ void TST_McpApp::pieceDetailsAreCuttingInstructions()
     QCOMPARE(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("width")).toString(), QStringLiteral("7"));
     QCOMPARE(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("height")).toString(), QStringLiteral("4"));
     QCOMPARE(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("fontSize")).toInt(), 12);
+    ok(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("x"), 2}, {QStringLiteral("y"), QStringLiteral("1+1")}}));
+    QVERIFY(qAbs(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("x")).toDouble() - 2.0) < 0.01);
+    QVERIFY(qAbs(pieceLabel(QStringLiteral("piece")).value(QStringLiteral("y")).toDouble() - 2.0) < 0.01);
     QVERIFY(fails(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("width"), 0}})).contains(QStringLiteral("greater than 0")));
     QVERIFY(fails(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("font_size"), 2}})).contains(QStringLiteral("font_size")));
     QVERIFY(fails(QStringLiteral("set_label"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("label"), QStringLiteral("x")}})).contains(QStringLiteral("'label'")));

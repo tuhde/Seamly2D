@@ -2860,13 +2860,23 @@ QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
         }
     }
     result.insert(QStringLiteral("corners"), corners);
-    auto labelJson = [](const VPatternLabelData &label)
+    QRectF labelBox;
+    try
+    {
+        labelBox = QPolygonF(piece.mainPathPoints(pieceData)).boundingRect();
+    }
+    catch (const VException &)
+    {
+    }
+    auto labelJson = [&labelBox](const VPatternLabelData &label)
     {
         return QJsonObject{{QStringLiteral("visible"), label.IsVisible()},
                            {QStringLiteral("width"), label.GetLabelWidth()},
                            {QStringLiteral("height"), label.GetLabelHeight()},
                            {QStringLiteral("fontSize"), label.getFontSize()},
-                           {QStringLiteral("angle"), label.getRotation()}};
+                           {QStringLiteral("angle"), label.getRotation()},
+                           {QStringLiteral("x"), round3(qApp->fromPixel(label.GetPos().x() - labelBox.left()))},
+                           {QStringLiteral("y"), round3(qApp->fromPixel(label.GetPos().y() - labelBox.top()))}};
     };
     result.insert(QStringLiteral("labels"), QJsonObject{{QStringLiteral("piece"), labelJson(piece.GetPatternPieceData())},
                                                         {QStringLiteral("pattern"), labelJson(piece.GetPatternInfo())}});
@@ -3786,7 +3796,7 @@ McpToolResult PatternEditor::setLabel(const QJsonObject &arguments)
                                                                : piece.GetPatternInfo();
     static const QStringList known{QStringLiteral("piece_id"), QStringLiteral("label"), QStringLiteral("visible"),
                                    QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("font_size"),
-                                   QStringLiteral("angle")};
+                                   QStringLiteral("angle"), QStringLiteral("x"), QStringLiteral("y")};
     for (auto it = arguments.constBegin(); it != arguments.constEnd(); ++it)
     {
         if (!known.contains(it.key()))
@@ -3853,6 +3863,31 @@ McpToolResult PatternEditor::setLabel(const QJsonObject &arguments)
     {
         label.SetVisible(arguments.value(QStringLiteral("visible")).toBool(true));
     }
+    if (arguments.contains(QStringLiteral("x")) || arguments.contains(QStringLiteral("y")))
+    {
+        // Position of the label's center, measured from the top left corner of the piece (y grows downwards).
+        const QRectF box = QPolygonF(piece.mainPathPoints(ref.data)).boundingRect();
+        const QPointF old = label.GetPos().isNull() ? box.center() : label.GetPos();
+        QPointF pos = old;
+        for (const char *key : {"x", "y"})
+        {
+            if (!arguments.contains(QLatin1String(key)))
+            {
+                continue;
+            }
+            QString text;
+            if (!formula(key, text))
+            {
+                return McpToolResult::error(error);
+            }
+            (QLatin1String(key) == QLatin1String("x") ? pos.rx() : pos.ry()) =
+                (QLatin1String(key) == QLatin1String("x") ? box.left() : box.top()) + qApp->toPixel(value);
+        }
+        label.setCenterAnchorPoint(NULL_ID);
+        label.setTopLeftAnchorPoint(NULL_ID);
+        label.setBottomRightAnchorPoint(NULL_ID);
+        label.SetPos(pos);
+    }
     if (label.IsVisible())
     {
         // A label without size or position cannot be seen: give it the size of a small tag in the middle of the
@@ -3892,7 +3927,7 @@ McpTool PatternEditor::setLabelTool()
     tool.description =
         QStringLiteral("Shows, hides or resizes a label on a piece. 'label' is \"piece\" (default: name, letter, "
                        "quantity) or \"pattern\" (information about the pattern). Optional: visible, width and "
-                       "height (pattern unit; a formula is evaluated once), font_size (points) and angle (degrees). A label that "
+                       "height (pattern unit; a formula is evaluated once), font_size (points), angle (degrees) and x/y (the label's center, measured from the top left corner of the piece, y down). A label that "
                        "is switched on without size or position gets a small default size in the middle of the "
                        "piece. One Undo step.");
     tool.inputSchema = QJsonObject{
@@ -3906,7 +3941,9 @@ McpTool PatternEditor::setLabelTool()
                      {QStringLiteral("width"), stringProperty(QStringLiteral("Width, number or formula."))},
                      {QStringLiteral("height"), stringProperty(QStringLiteral("Height, number or formula."))},
                      {QStringLiteral("font_size"), idProperty(QStringLiteral("Font size in points (4-100)."))},
-                     {QStringLiteral("angle"), stringProperty(QStringLiteral("Rotation in degrees."))}}},
+                     {QStringLiteral("angle"), stringProperty(QStringLiteral("Rotation in degrees."))},
+                     {QStringLiteral("x"), stringProperty(QStringLiteral("Center of the label, from the left edge of the piece (pattern unit)."))},
+                     {QStringLiteral("y"), stringProperty(QStringLiteral("Center of the label, from the top edge of the piece (pattern unit, down)."))}}},
         {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setLabel(arguments); };
     return tool;
