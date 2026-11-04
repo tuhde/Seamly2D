@@ -77,6 +77,7 @@
 #include "../../libs/vtools/tools/drawTools/toolpoint/toolsinglepoint/vtooltriangle.h"
 #include "../../libs/vtools/tools/drawTools/vtoolline.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolarc.h"
+#include "../../libs/vtools/tools/nodeDetails/anchorpoint_tool.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolellipticalarc.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolcubicbezier.h"
 #include "../../libs/vtools/tools/drawTools/toolcurve/vtoolsplinepath.h"
@@ -3478,6 +3479,85 @@ McpToolResult PatternEditor::setGrainline(const QJsonObject &arguments)
     return applyPieceChange(ref, piece, QObject::tr("Claude: set grainline of %1").arg(piece.GetName()),
                             QStringLiteral("Set the grainline of piece \"%1\" (angle %2, length %3). Undo removes it.")
                                 .arg(piece.GetName(), angle, length));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::addAnchorPoint(const QJsonObject &arguments)
+{
+    const Context ctx = currentContext();
+    if (!ctx.valid())
+    {
+        return McpToolResult::error(ctx.error);
+    }
+    PieceRef ref;
+    QString error;
+    if (!findPiece(arguments, ref, error))
+    {
+        return McpToolResult::error(error);
+    }
+    quint32 pointId = NULL_ID;
+    if (!pointArg(ctx, arguments, "point_id", pointId, error))
+    {
+        return McpToolResult::error(error);
+    }
+    const QString pointName = ctx.data->GetGObject(pointId)->name();
+    for (const quint32 anchor : ref.piece.getAnchors())
+    {
+        try
+        {
+            if (ctx.data->GetGObject(anchor)->name() == pointName)
+            {
+                return McpToolResult::error(QStringLiteral("Point %1 is already an anchor point of piece \"%2\".")
+                                                .arg(pointName, ref.piece.GetName()));
+            }
+        }
+        catch (const VException &)
+        {
+        }
+    }
+
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(QObject::tr("Claude: add anchor point %1").arg(pointName));
+    AnchorPointTool *created = nullptr;
+    try
+    {
+        created = AnchorPointTool::Create(0, pointId, ref.id, ctx.doc, ctx.data, Document::FullParse, Source::FromGui);
+    }
+    catch (const VException &e)
+    {
+        stack->endMacro();
+        return McpToolResult::error(QStringLiteral("Could not add the anchor point: %1").arg(e.ErrorMessage()));
+    }
+    stack->endMacro();
+    if (created == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The anchor point could not be added."));
+    }
+    const int count = ctx.data->GetPiece(ref.id).getAnchors().size();
+    return McpToolResult::ok(QStringLiteral("Added anchor point %1 to piece \"%2\" (now %3 anchor point(s)). Undo "
+                                            "removes it.").arg(pointName, ref.piece.GetName()).arg(count),
+                             QJsonObject{{QStringLiteral("piece_id"), static_cast<qint64>(ref.id)},
+                                         {QStringLiteral("point"), pointName},
+                                         {QStringLiteral("anchorPoints"), count}});
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::addAnchorPointTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("add_anchor_point");
+    tool.description =
+        QStringLiteral("Adds an anchor point to a piece: a point of the drawing that the piece carries along (for "
+                       "example for a pocket position or a label). It does not have to lie on the outline. 'point_id' "
+                       "is the id of a point of the active draft block. One Undo step; removing an anchor point is "
+                       "done with Undo or in Seamly2D.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("piece_id"), idProperty(QStringLiteral("Piece id from list_pieces."))},
+                                                {QStringLiteral("point_id"), idProperty(QStringLiteral("Id of the point."))}}},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id"), QStringLiteral("point_id")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addAnchorPoint(arguments); };
+    return tool;
 }
 
 //---------------------------------------------------------------------------------------------------------------------

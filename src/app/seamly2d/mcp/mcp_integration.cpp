@@ -204,6 +204,7 @@ void McpIntegration::registerTools()
     m_registry.registerTool(PatternEditor::addLineTool());
     m_registry.registerTool(PatternEditor::addCurveTool());
     m_registry.registerTool(PatternEditor::addArcTool());
+    m_registry.registerTool(PatternEditor::addAnchorPointTool());
     m_registry.registerTool(PatternEditor::addEllipticalArcTool());
     m_registry.registerTool(PatternEditor::listVariablesTool());
     m_registry.registerTool(PatternEditor::listStandardMeasurementsTool());

@@ -239,7 +239,7 @@ void TST_McpApp::toolsAreListed()
     const QStringList expected{
         "get_pattern_info", "list_objects", "add_draft_block", "add_point", "add_line", "add_curve", "add_arc", "add_elliptical_arc",
         "update_object", "delete_object", "list_variables", "set_variable", "delete_variable", "add_piece",
-        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
+        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "add_anchor_point", "set_measurement", "list_standard_measurements", "create_measurements", "attach_measurements", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
         "export_layout"};
     for (const QString &name : expected)
     {
@@ -934,6 +934,14 @@ void TST_McpApp::pieceDetailsAreCuttingInstructions()
                                                    {QStringLiteral("type"), QStringLiteral("t")}, {QStringLiteral("count"), 2}}))
                   .value(QStringLiteral("notches")).toArray();
     QCOMPARE(notches.size(), 1);
+
+    // Anchor points: any point of the drawing; twice is refused; Undo takes it away again.
+    QCOMPARE(ok(QStringLiteral("add_anchor_point"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointM}})).value(QStringLiteral("anchorPoints")).toInt(), 1);
+    QVERIFY(fails(QStringLiteral("add_anchor_point"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointM}})).contains(QStringLiteral("already")));
+    QVERIFY(fails(QStringLiteral("add_anchor_point"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), 99999}})).contains(QStringLiteral("point_id")));
+    QVERIFY(ok(QStringLiteral("undo")).value(QStringLiteral("steps")).toArray().at(0).toString().contains(QStringLiteral("anchor")));
+    QCOMPARE(ok(QStringLiteral("add_anchor_point"), obj({{QStringLiteral("piece_id"), id}, {QStringLiteral("point_id"), pointM}})).value(QStringLiteral("anchorPoints")).toInt(), 1);
+    ok(QStringLiteral("undo"));
 
     // Everything above is one undo step per call and shows up in list_pieces.
     const QJsonObject listed = ok(QStringLiteral("list_pieces")).value(QStringLiteral("pieces")).toArray().at(0).toObject();
