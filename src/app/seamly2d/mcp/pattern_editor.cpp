@@ -1721,7 +1721,88 @@ McpToolResult PatternEditor::updateObject(const QJsonObject &arguments)
         double r2 = 0;
         try
         {
-            if (objectType == QLatin1String("pointOfIntersectionCircles"))
+            if (objectType == VToolLineIntersect::ToolType)
+            {
+                QPointF ignored;
+                if (QLineF(position("p1Line1"), position("p2Line1"))
+                        .intersects(QLineF(position("p1Line2"), position("p2Line2")), &ignored)
+                    == QLineF::NoIntersection)
+                {
+                    problem = QStringLiteral("The two lines would be parallel (or a line would have no length).");
+                }
+            }
+            else if (objectType == QLatin1String("lineIntersectAxis"))
+            {
+                double angleValue = 0;
+                QString angleFormula = merged("angle");
+                if (!checkFormula(variables, QStringLiteral("angle"), angleFormula, angleValue, error))
+                {
+                    problem = error;
+                }
+                else
+                {
+                    QLineF axis(position("basePoint"), position("basePoint") + QPointF(100, 0));
+                    axis.setAngle(angleValue);
+                    if (VToolLineIntersectAxis::FindPoint(axis, QLineF(position("p1Line"), position("p2Line"))).isNull())
+                    {
+                        problem = QStringLiteral("The axis would not cross the line (they are parallel).");
+                    }
+                }
+            }
+            else if (objectType == QLatin1String("curveIntersectAxis"))
+            {
+                double angleValue = 0;
+                QString angleFormula = merged("angle");
+                const QSharedPointer<VAbstractCurve> curve = curveOf(ctx, merged("curve").toUInt());
+                QPointF crossingPoint;
+                if (!checkFormula(variables, QStringLiteral("angle"), angleFormula, angleValue, error))
+                {
+                    problem = error;
+                }
+                else if (curve.isNull()
+                         || !VToolCurveIntersectAxis::FindPoint(position("basePoint"), angleValue, curve, &crossingPoint))
+                {
+                    problem = QStringLiteral("The axis would not cross the curve.");
+                }
+            }
+            else if (objectType == QLatin1String("cutSpline") || objectType == QLatin1String("cutSplinePath")
+                     || objectType == QLatin1String("cutArc"))
+            {
+                const char *curveAttribute = objectType == QLatin1String("cutArc") ? "arc"
+                                             : objectType == QLatin1String("cutSplinePath") ? "splinePath" : "spline";
+                const QSharedPointer<VAbstractCurve> curve = curveOf(ctx, merged(curveAttribute).toUInt());
+                double lengthValue = 0;
+                QString lengthFormula = merged("length");
+                if (!checkFormula(variables, QStringLiteral("length"), lengthFormula, lengthValue, error))
+                {
+                    problem = error;
+                }
+                else
+                {
+                    const double curveLength = curve.isNull() ? 0 : qApp->fromPixel(curve->GetLength());
+                    if (curve.isNull() || lengthValue <= 0.01 || lengthValue >= curveLength - 0.01)
+                    {
+                        problem = QStringLiteral("The cut length would not lie between 0 and the length of the curve "
+                                                 "(%1 %2).").arg(curveLength, 0, 'f', 3).arg(UnitsToStr(qApp->patternUnit()));
+                    }
+                }
+            }
+            else if (objectType == QLatin1String("shoulder"))
+            {
+                double lengthValue = 0;
+                QString lengthFormula = merged("length");
+                if (!checkFormula(variables, QStringLiteral("length"), lengthFormula, lengthValue, error))
+                {
+                    problem = error;
+                }
+                else if (lengthValue <= 0
+                         || VToolShoulderPoint::FindPoint(position("p1Line"), position("p2Line"), position("pShoulder"),
+                                                          qApp->toPixel(lengthValue)) == position("p2Line"))
+                {
+                    problem = QStringLiteral("There would be no point at this distance from the shoulder point.");
+                }
+            }
+            else if (objectType == QLatin1String("pointOfIntersectionCircles"))
             {
                 if (!radiusOf("c1Radius", r1) || !radiusOf("c2Radius", r2) || merged("c1Center") == merged("c2Center"))
                 {

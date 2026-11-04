@@ -352,6 +352,12 @@ void TST_McpApp::pointsAreComputedLikeTheDialogsDoIt()
     QVERIFY(near(x.value(QStringLiteral("x")).toDouble(), m_baseX + 20));
     QVERIFY(near(x.value(QStringLiteral("y")).toDouble(), m_baseY + 10));
 
+    // Changing it so that the lines no longer cross is refused (the program would stop on an error dialog).
+    QVERIFY(fails(QStringLiteral("update_object"), obj({{QStringLiteral("id"), x.value(QStringLiteral("id"))}, {QStringLiteral("line2_point1_id"), 1},
+                                                       {QStringLiteral("line2_point2_id"), d.value(QStringLiteral("id"))}}))
+                .contains(QStringLiteral("parallel")));
+    QVERIFY(near(point(QStringLiteral("X")).value(QStringLiteral("x")).toDouble(), m_baseX + 20));
+
     // Lines: A-B, A-C and B-D are already drawn by the points; C-D is not.
     fails(QStringLiteral("add_line"), obj({{QStringLiteral("first_point_id"), 1},
                                            {QStringLiteral("second_point_id"), b.value(QStringLiteral("id"))}}));
