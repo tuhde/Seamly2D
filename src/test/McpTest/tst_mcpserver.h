@@ -61,6 +61,7 @@ private slots:
     void notificationsOverHttpAreAccepted();
     void batchesAreAnsweredOneByOne();
     void aSecondRequestWhileAToolRunsIsRefused();
+    void aRunningToolIsNotAbortedByTheIdleTimeout();
     void newTokenLocksOutTheOldOne();
 
 private:

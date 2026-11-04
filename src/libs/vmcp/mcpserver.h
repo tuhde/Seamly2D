@@ -74,6 +74,8 @@ public:
     void setServerInfo(const QString &name, const QString &title, const QString &version);
     /// Text sent to the client in the `initialize` result (working model, conventions).
     void setInstructions(const QString &instructions);
+    /// How long a connection may stay idle before it is closed (default ConnectionTimeoutMs; for tests).
+    void setConnectionTimeout(int milliseconds) { m_connectionTimeoutMs = milliseconds; }
 
     /// Handles one JSON-RPC message (request, notification or response). Returns the reply, or a null
     /// value when no reply is due (notifications and responses). Public so protocol tests need no sockets.
@@ -111,6 +113,7 @@ private:
     McpToolRegistry *m_registry;
     QTcpServer       m_server;
     QHash<QTcpSocket *, Connection> m_connections;
+    int              m_connectionTimeoutMs = ConnectionTimeoutMs;
     QString          m_token;
     QString          m_name         = QStringLiteral("mcp-server");
     QString          m_title;

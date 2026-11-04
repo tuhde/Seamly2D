@@ -221,7 +221,7 @@ void McpServer::onNewConnection()
 
         // A client that connects and then stalls must not keep the socket (and its buffer) forever. A request that was
         // received completely is not stalled: its tool may wait for the user to answer a confirmation dialog.
-        QTimer::singleShot(ConnectionTimeoutMs, socket, [this, socket]()
+        QTimer::singleShot(m_connectionTimeoutMs, socket, [this, socket]()
         {
             const auto it = m_connections.constFind(socket);
             if (it != m_connections.constEnd() && !it->processing)

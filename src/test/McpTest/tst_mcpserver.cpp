@@ -23,6 +23,8 @@
 #include "tst_mcpserver.h"
 
 #include <QEventLoop>
+#include <QTcpSocket>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QtTest>
 
@@ -410,6 +412,31 @@ void TST_McpServer::aSecondRequestWhileAToolRunsIsRefused()
     QVERIFY(second.json().contains(QStringLiteral("result")));
     QCOMPARE(secondTool.status, 200);
     QVERIFY2(secondTool.json().contains(QStringLiteral("error")), qPrintable(QString::fromUtf8(secondTool.body)));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpServer::aRunningToolIsNotAbortedByTheIdleTimeout()
+{
+    // The idle timeout (15 s in the program) must not cut a request whose tool waits for the user. Here: 200 ms
+    // timeout, a tool that needs 600 ms.
+    m_server->setConnectionTimeout(200);
+    const QJsonObject slow = object({{QStringLiteral("jsonrpc"), QStringLiteral("2.0")}, {QStringLiteral("id"), 1},
+                                     {QStringLiteral("method"), QStringLiteral("tools/call")},
+                                     {QStringLiteral("params"), object({{QStringLiteral("name"),
+                                                                         QStringLiteral("slow")}})}});
+    const HttpReply reply = httpRequest(m_server->port(), "POST", "/mcp", {{"Authorization", "Bearer test-token"}},
+                                        QJsonDocument(slow).toJson(QJsonDocument::Compact));
+    QCOMPARE(reply.status, 200);
+    QVERIFY(reply.body.contains("done waiting"));
+
+    // A client that stalls with half a request is still disconnected.
+    QTcpSocket stalled;
+    stalled.connectToHost(QHostAddress::LocalHost, m_server->port());
+    // (the server lives in this thread, so the waiting has to run the event loop)
+    QTRY_COMPARE_WITH_TIMEOUT(stalled.state(), QAbstractSocket::ConnectedState, 2000);
+    stalled.write("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+    QTRY_COMPARE_WITH_TIMEOUT(stalled.state(), QAbstractSocket::UnconnectedState, 3000);
+    m_server->setConnectionTimeout(McpServer::ConnectionTimeoutMs);
 }
 
 //---------------------------------------------------------------------------------------------------------------------
