@@ -1346,6 +1346,38 @@ QVector<EditableAttr> editableAttributes(const QDomElement &element)
         return {{"name", "name", AttrKind::Text}, {"x_from_point_id", "firstPoint", AttrKind::Reference},
                 {"y_from_point_id", "secondPoint", AttrKind::Reference}};
     }
+    if (type == QLatin1String("pointOfIntersectionCircles"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"center1_point_id", "c1Center", AttrKind::Reference},
+                {"center2_point_id", "c2Center", AttrKind::Reference}, {"radius1", "c1Radius", AttrKind::Formula},
+                {"radius2", "c2Radius", AttrKind::Formula}};
+    }
+    if (type == QLatin1String("pointOfContact"))   // circle and line
+    {
+        return {{"name", "name", AttrKind::Text}, {"center_point_id", "center", AttrKind::Reference},
+                {"radius", "radius", AttrKind::Formula}, {"line_point1_id", "firstPoint", AttrKind::Reference},
+                {"line_point2_id", "secondPoint", AttrKind::Reference}};
+    }
+    if (type == QLatin1String("pointFromCircleAndTangent"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"center_point_id", "cCenter", AttrKind::Reference},
+                {"tangent_point_id", "tangent", AttrKind::Reference}, {"radius", "cRadius", AttrKind::Formula}};
+    }
+    if (type == QLatin1String("pointOfIntersectionArcs"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"first_arc_id", "firstArc", AttrKind::CurveReference},
+                {"second_arc_id", "secondArc", AttrKind::CurveReference}};
+    }
+    if (type == QLatin1String("pointFromArcAndTangent"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"arc_id", "arc", AttrKind::CurveReference},
+                {"tangent_point_id", "tangent", AttrKind::Reference}};
+    }
+    if (type == QLatin1String("pointOfIntersectionCurves"))
+    {
+        return {{"name", "name", AttrKind::Text}, {"first_curve_id", "curve1", AttrKind::CurveReference},
+                {"second_curve_id", "curve2", AttrKind::CurveReference}};
+    }
     if (type == QLatin1String("single"))   // base point of a draft block
     {
         return {{"name", "name", AttrKind::Text}, {"x", "x", AttrKind::Number}, {"y", "y", AttrKind::Number}};
@@ -1668,6 +1700,118 @@ McpToolResult PatternEditor::updateObject(const QJsonObject &arguments)
             }
         }
     }
+    // Circle, arc and curve intersections must still exist after the change; the program would otherwise stop on
+    // an error dialog while re-computing the pattern.
+    {
+        const QString objectType = oldElement.attribute(AttrType);
+        auto merged = [&](const char *attribute)
+        {
+            return changes.value(QLatin1String(attribute), oldElement.attribute(QLatin1String(attribute)));
+        };
+        auto position = [&](const char *attribute) { return positionOf(ctx, merged(attribute).toUInt()); };
+        auto radiusOf = [&](const char *attribute, double &value)
+        {
+            QString formula = merged(attribute);
+            return checkFormula(variables, QLatin1String(attribute), formula, value, error) && value > 0;
+        };
+        const int crossValue = oldElement.attribute(QStringLiteral("crossPoint")).toInt();
+        const CrossCirclesPoint cross = static_cast<CrossCirclesPoint>(crossValue);
+        QString problem;
+        double r1 = 0;
+        double r2 = 0;
+        try
+        {
+            if (objectType == QLatin1String("pointOfIntersectionCircles"))
+            {
+                if (!radiusOf("c1Radius", r1) || !radiusOf("c2Radius", r2) || merged("c1Center") == merged("c2Center"))
+                {
+                    problem = QStringLiteral("The two circles need different centers and radii greater than 0.");
+                }
+                else if (IntersectCirclesTool::FindPoint(position("c1Center"), position("c2Center"),
+                                                         qApp->toPixel(r1), qApp->toPixel(r2), cross).isNull())
+                {
+                    problem = QStringLiteral("The two circles would not intersect.");
+                }
+            }
+            else if (objectType == QLatin1String("pointOfContact"))
+            {
+                if (!radiusOf("radius", r1) || merged("firstPoint") == merged("secondPoint"))
+                {
+                    problem = QStringLiteral("The line needs two different points and the radius must be greater than 0.");
+                }
+                else if (IntersectArcLineTool::FindPoint(qApp->toPixel(r1), position("center"), position("firstPoint"),
+                                                         position("secondPoint")).isNull())
+                {
+                    problem = QStringLiteral("The circle and the line would not meet.");
+                }
+            }
+            else if (objectType == QLatin1String("pointFromCircleAndTangent"))
+            {
+                if (!radiusOf("cRadius", r1) || merged("cCenter") == merged("tangent"))
+                {
+                    problem = QStringLiteral("The point must differ from the center and the radius must be greater than 0.");
+                }
+                else if (IntersectCircleTangentTool::FindPoint(position("tangent"), position("cCenter"),
+                                                               qApp->toPixel(r1), cross).isNull())
+                {
+                    problem = QStringLiteral("There would be no tangent: the point lies inside the circle.");
+                }
+            }
+            else if (objectType == QLatin1String("pointOfIntersectionArcs"))
+            {
+                const QSharedPointer<VArc> arc1 = arcOf(ctx, merged("firstArc").toUInt());
+                const QSharedPointer<VArc> arc2 = arcOf(ctx, merged("secondArc").toUInt());
+                if (arc1.isNull() || arc2.isNull() || merged("firstArc") == merged("secondArc"))
+                {
+                    problem = QStringLiteral("'first_arc_id' and 'second_arc_id' must be two different arcs.");
+                }
+                else if (VToolPointOfIntersectionArcs::FindPoint(arc1.data(), arc2.data(), cross).isNull())
+                {
+                    problem = QStringLiteral("The two arcs would not intersect.");
+                }
+            }
+            else if (objectType == QLatin1String("pointFromArcAndTangent"))
+            {
+                const QSharedPointer<VArc> arc = arcOf(ctx, merged("arc").toUInt());
+                if (arc.isNull())
+                {
+                    problem = QStringLiteral("'arc_id' must be an arc of the active draft block.");
+                }
+                else if (IntersectCircleTangentTool::FindPoint(position("tangent"),
+                                                               static_cast<QPointF>(arc->GetCenter()), arc->GetRadius(),
+                                                               cross).isNull())
+                {
+                    problem = QStringLiteral("There would be no tangent: the point lies inside the arc's circle.");
+                }
+            }
+            else if (objectType == QLatin1String("pointOfIntersectionCurves"))
+            {
+                const QSharedPointer<VAbstractCurve> c1 = curveOf(ctx, merged("curve1").toUInt());
+                const QSharedPointer<VAbstractCurve> c2 = curveOf(ctx, merged("curve2").toUInt());
+                if (c1.isNull() || c2.isNull() || merged("curve1") == merged("curve2"))
+                {
+                    problem = QStringLiteral("'first_curve_id' and 'second_curve_id' must be two different curves.");
+                }
+                else if (VToolPointOfIntersectionCurves::FindPoint(
+                             c1->getPoints(), c2->getPoints(),
+                             static_cast<VCrossCurvesPoint>(oldElement.attribute(QStringLiteral("vCrossPoint")).toInt()),
+                             static_cast<HCrossCurvesPoint>(oldElement.attribute(QStringLiteral("hCrossPoint")).toInt()))
+                             .isNull())
+                {
+                    problem = QStringLiteral("The two curves would not cross.");
+                }
+            }
+        }
+        catch (const VException &)
+        {
+            problem = QStringLiteral("The new references are not valid for this object.");
+        }
+        if (!problem.isEmpty())
+        {
+            return McpToolResult::error(problem + QStringLiteral(" Nothing was changed."));
+        }
+    }
+
     if (changes.isEmpty())
     {
         return McpToolResult::error(QStringLiteral("Nothing to change: give at least one of: %1.")
@@ -3607,10 +3751,16 @@ McpTool PatternEditor::updateObjectTool()
     for (const char *key : {"base_point_id", "first_point_id", "second_point_id", "vertex_point_id", "third_point_id",
                             "line1_point1_id", "line1_point2_id", "line2_point1_id", "line2_point2_id",
                             "line_point1_id", "line_point2_id", "shoulder_point_id", "axis_point1_id",
-                            "axis_point2_id", "x_from_point_id", "y_from_point_id", "curve_id"})
+                            "axis_point2_id", "x_from_point_id", "y_from_point_id", "curve_id", "center_point_id",
+                            "center1_point_id", "center2_point_id", "tangent_point_id", "first_arc_id",
+                            "second_arc_id", "arc_id", "first_curve_id", "second_curve_id"})
     {
         properties.insert(QLatin1String(key), idProperty(QStringLiteral("New referenced point (or, for curve_id, "
                                                                          "curve) id: an earlier object.")));
+    }
+    for (const char *key : {"radius", "radius1", "radius2"})
+    {
+        properties.insert(QLatin1String(key), stringProperty(QStringLiteral("Circle points: new radius, number or formula.")));
     }
     properties.insert(QStringLiteral("from"),
                       QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},

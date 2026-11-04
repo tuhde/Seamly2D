@@ -757,6 +757,15 @@ void TST_McpApp::circleArcAndCurveIntersectionsAreComputed()
     QVERIFY(isAt(rel(add(obj({{QStringLiteral("type"), QStringLiteral("intersectCurves")}, {QStringLiteral("first_curve_id"), m_straightCurve}, {QStringLiteral("second_curve_id"), diagonal},
                               {QStringLiteral("name"), QStringLiteral("CC1")}}))), 20, 20));
 
+    // update_object works on the circle/arc/curve intersection points, too: the point follows the new radius.
+    const int ic = add(obj({{QStringLiteral("type"), QStringLiteral("intersectCircles")}, {QStringLiteral("center1_point_id"), a}, {QStringLiteral("radius1"), QStringLiteral("30")},
+                            {QStringLiteral("center2_point_id"), b}, {QStringLiteral("radius2"), QStringLiteral("30")}, {QStringLiteral("name"), QStringLiteral("IC")}})).value(QStringLiteral("id")).toInt();
+    QVERIFY(near(rel(ok(QStringLiteral("update_object"), obj({{QStringLiteral("id"), ic}, {QStringLiteral("radius1"), QStringLiteral("25")}}))).x(), 16.5625, 0.02));
+    QVERIFY(fails(QStringLiteral("update_object"), obj({{QStringLiteral("id"), ic}, {QStringLiteral("radius1"), QStringLiteral("5")}})).contains(QStringLiteral("would not intersect")));
+    QVERIFY(near(point(QStringLiteral("IC")).value(QStringLiteral("x")).toDouble() - m_baseX, 16.5625, 0.02));   // unchanged
+    QVERIFY(fails(QStringLiteral("update_object"), obj({{QStringLiteral("id"), ic}, {QStringLiteral("radius1"), QStringLiteral("nonsense+")}})).contains(QStringLiteral("radius1")));
+    QVERIFY(fails(QStringLiteral("update_object"), obj({{QStringLiteral("id"), ic}, {QStringLiteral("center1_point_id"), ic}})).contains(QStringLiteral("itself")));
+
     // No intersection, no result.
     const int before = ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt();
     QVERIFY(fails(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("intersectCircles")}, {QStringLiteral("center1_point_id"), a}, {QStringLiteral("radius1"), QStringLiteral("5")},
