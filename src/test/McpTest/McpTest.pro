@@ -22,6 +22,9 @@ CONFIG -= precompile_header
 PRECOMPILED_HEADER =
 
 DESTDIR = bin
+
+# Test files of the other test projects (the trousers pattern with its measurement file)
+DEFINES += SRCDIR=\\\"$$PWD/\\\"
 MOC_DIR = moc
 OBJECTS_DIR = obj
 

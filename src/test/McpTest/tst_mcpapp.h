@@ -55,9 +55,11 @@ private slots:
     void circleArcAndCurveIntersectionsAreComputed();
     void piecesReportAreaAndPerimeter();
     void pieceDetailsAreCuttingInstructions();
+    void undoAndRedoStepBackThroughChanges();
     void savingAndReopeningGivesTheSamePattern();
     void exportWritesFiles();
     void screenshotReturnsAPng();
+    void measurementValuesCanBeChanged();
 
 private:
     bool        startApp();

@@ -88,6 +88,10 @@ public:
     static McpToolResult setGrainline(const QJsonObject &arguments);
     static McpToolResult setNotch(const QJsonObject &arguments);
 
+    /// Tool `set_measurement` (value in the measurement file, after the user confirmed) and `undo` / `redo`.
+    static McpToolResult setMeasurement(const QJsonObject &arguments);
+    static McpToolResult undoRedo(const QJsonObject &arguments, bool undo);
+
     /// Tool `export_layout`: writes the pieces as pdf/svg/png/... (arranged on pages, or one by one).
     static McpToolResult exportLayout(const QJsonObject &arguments);
 
@@ -100,6 +104,9 @@ public:
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool setMeasurementTool();
+    static McpTool undoTool();
+    static McpTool redoTool();
     static McpTool updatePieceTool();
     static McpTool setGrainlineTool();
     static McpTool setNotchTool();

@@ -120,6 +120,8 @@
 #include <QAction>
 #include <QProcess>
 #include <QSettings>
+#include <functional>
+#include <cmath>
 #include <QCheckBox>
 #include <QSet>
 #include <QtGlobal>
@@ -7419,6 +7421,181 @@ bool MainWindow::mcpZoom(const QString &target, quint32 pieceId, QString &error)
     }
     error = QStringLiteral("Unknown target \"%1\". Use \"all\", \"block\" or \"piece\".").arg(target);
     return false;
+}
+
+namespace
+{
+/// An undo step made of two functions (here: write a measurement value to its file). The first redo() is skipped: the
+/// change has already been made when the command is pushed.
+class McpFunctionCommand : public QUndoCommand
+{
+public:
+    McpFunctionCommand(const QString &text, std::function<void()> redoFunction, std::function<void()> undoFunction)
+        : QUndoCommand(text), m_redo(std::move(redoFunction)), m_undo(std::move(undoFunction))
+    {}
+    void redo() override
+    {
+        if (m_firstRedo)
+        {
+            m_firstRedo = false;
+            return;
+        }
+        m_redo();
+    }
+    void undo() override { m_undo(); }
+
+private:
+    std::function<void()> m_redo;
+    std::function<void()> m_undo;
+    bool                  m_firstRedo = true;
+};
+} // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+QString MainWindow::mcpUndo(bool undo)
+{
+    QUndoStack *stack = qApp->getUndoStack();
+    const QString text = undo ? stack->undoText() : stack->redoText();
+    if (undo ? !stack->canUndo() : !stack->canRedo())
+    {
+        return QString();
+    }
+    if (undo)
+    {
+        stack->undo();
+    }
+    else
+    {
+        stack->redo();
+    }
+    return text;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpSetMeasurement(const QString &name, double value, QString &error)
+{
+    if (m_measurements.isNull() || m_measurements->isNull() || doc->MPath().isEmpty())
+    {
+        error = QStringLiteral("The pattern has no measurement file (open one together with the pattern: "
+                               "open_pattern with measurements_path).");
+        return QJsonObject();
+    }
+    if (m_measurements->Type() != MeasurementsType::Individual)
+    {
+        error = QStringLiteral("Only individual measurement files can be changed here; this one is a multisize "
+                               "table (its values depend on the size and height).");
+        return QJsonObject();
+    }
+    if (m_measurements->isReadOnly())
+    {
+        error = QStringLiteral("The measurement file is marked read only.");
+        return QJsonObject();
+    }
+    const QString path = AbsoluteMPath(qApp->getFilePath(), doc->MPath());
+    if (!QFileInfo(path).isFile() || !QFileInfo(path).isWritable())
+    {
+        error = QStringLiteral("The measurement file \"%1\" does not exist or is not writable.").arg(path);
+        return QJsonObject();
+    }
+    const QSharedPointer<VInternalVariable> variable = pattern->DataVariables()->value(name);
+    if (variable.isNull() || variable->GetType() != VarType::Measurement)
+    {
+        error = QStringLiteral("There is no measurement named \"%1\" in this pattern (see list_variables).").arg(name);
+        return QJsonObject();
+    }
+    if (!std::isfinite(value) || value < 0 || value > 100000)
+    {
+        error = QStringLiteral("'value' must be a number from 0 to 100000, in the pattern unit (%1).")
+                    .arg(UnitsToStr(qApp->patternUnit()));
+        return QJsonObject();
+    }
+
+    // The file keeps its own unit and may store a formula; remember the exact old text for undo.
+    QString oldText;
+    const QDomNodeList measurements = m_measurements->elementsByTagName(QStringLiteral("m"));
+    for (int i = 0; i < measurements.size(); ++i)
+    {
+        const QDomElement element = measurements.at(i).toElement();
+        if (element.attribute(QStringLiteral("name")) == name)
+        {
+            oldText = element.attribute(QStringLiteral("value"));
+        }
+    }
+    if (oldText.isEmpty())
+    {
+        error = QStringLiteral("The measurement \"%1\" is not stored in the measurement file (it is a built-in "
+                               "value).").arg(name);
+        return QJsonObject();
+    }
+    const double oldValue = *variable->GetValue();
+    const QString newText = QString::number(UnitConvertor(value, qApp->patternUnit(), m_measurements->measurementUnits()),
+                                            'g', 10);
+
+    if (!mcpConfirmFileAccess(this, tr("Claude wants to change a measurement"),
+                              tr("Claude wants to change the measurement \"%1\" from %2 to %3 %4 in the measurement "
+                                 "file:\n\n%5\n\nEvery pattern that uses this file is affected.")
+                                  .arg(name).arg(oldValue).arg(value).arg(UnitsToStr(qApp->patternUnit()), path),
+                              path))
+    {
+        error = QStringLiteral("The user did not allow changing the measurement file \"%1\".").arg(path);
+        return QJsonObject();
+    }
+
+    // Writes one value to the file and re-reads it like "sync measurements" does.
+    auto write = [this, path, name](const QString &text, QString &problem) -> bool
+    {
+        const bool watched = m_watcher->files().contains(path);
+        if (watched)
+        {
+            m_watcher->removePath(path);   // our own write must not look like an edit made by someone else
+        }
+        m_measurements->SetMValue(name, text);
+        QString saveError;
+        bool done = m_measurements->SaveDocument(path, saveError);
+        if (!done)
+        {
+            problem = saveError;
+        }
+        else
+        {
+            done = updateMeasurements(path, static_cast<int>(VContainer::size()), static_cast<int>(VContainer::height()));
+            if (!done)
+            {
+                problem = tr("The measurement file could not be read again.");
+            }
+            else
+            {
+                doc->LiteParseTree(Document::LiteParse);
+            }
+        }
+        m_changes = false;
+        updateWindowTitle();
+        if (watched)
+        {
+            m_watcher->addPath(path);
+        }
+        return done;
+    };
+
+    QString problem;
+    if (!write(newText, problem))
+    {
+        QString ignored;
+        write(oldText, ignored);   // put the old value back
+        error = QStringLiteral("Could not change the measurement: %1").arg(problem);
+        return QJsonObject();
+    }
+
+    qApp->getUndoStack()->push(new McpFunctionCommand(
+        tr("Claude: set measurement %1").arg(name),
+        [write, newText]() { QString p; write(newText, p); },
+        [write, oldText]() { QString p; write(oldText, p); }));
+
+    return QJsonObject{{QStringLiteral("name"), name},
+                       {QStringLiteral("oldValue"), oldValue},
+                       {QStringLiteral("value"), value},
+                       {QStringLiteral("unit"), UnitsToStr(qApp->patternUnit())},
+                       {QStringLiteral("file"), path}};
 }
 
 //---------------------------------------------------------------------------------------------------------------------

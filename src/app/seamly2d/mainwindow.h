@@ -132,6 +132,13 @@ public:
     /// Zooms the view for the MCP tool `fit_view`: "all" (Zoom fit), "block" (Zoom selected in the draft view: the
     /// active draft block) or "piece" (the piece with `pieceId` in the piece view). Returns false and sets `error`.
     bool mcpZoom(const QString &target, quint32 pieceId, QString &error);
+    /// Changes the value of a measurement in the measurement file of the pattern for the MCP tool `set_measurement`.
+    /// `value` is in the pattern unit. The user is asked to confirm (the file is shared by all patterns that use it);
+    /// the change is one undo step that writes the old value back. Individual measurement files only.
+    QJsonObject mcpSetMeasurement(const QString &name, double value, QString &error);
+    /// Undo / redo for the MCP tools; returns the text of the step that was undone / redone (empty if none).
+    QString mcpUndo(bool undo);
+
     /// The scene that shows the pattern pieces (needed to create pieces without the Piece tool dialog).
     VMainGraphicsScene *mcpPieceScene() const { return pieceScene; }
     /// Enables the piece-related tools after a piece was added, like closing the Piece tool dialog does.

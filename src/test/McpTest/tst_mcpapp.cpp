@@ -239,7 +239,7 @@ void TST_McpApp::toolsAreListed()
     const QStringList expected{
         "get_pattern_info", "list_objects", "add_draft_block", "add_point", "add_line", "add_curve", "add_arc",
         "update_object", "delete_object", "list_variables", "set_variable", "delete_variable", "add_piece",
-        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
+        "list_pieces", "delete_piece", "update_piece", "set_grainline", "set_notch", "set_measurement", "undo", "redo", "show_mode", "fit_view", "screenshot", "save_pattern", "open_pattern",
         "export_layout"};
     for (const QString &name : expected)
     {
@@ -453,6 +453,38 @@ void TST_McpApp::objectsCanBeChangedAndDeleted()
     QVERIFY(fails(QStringLiteral("delete_object"), obj({{QStringLiteral("id"), idB}})).contains(QStringLiteral("still used")));
     ok(QStringLiteral("delete_object"), obj({{QStringLiteral("id"), idE}}));
     QVERIFY(point(QStringLiteral("E")).isEmpty());
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::undoAndRedoStepBackThroughChanges()
+{
+    const int before = ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt();
+    ok(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("endLine")}, {QStringLiteral("base_point_id"), 1}, {QStringLiteral("length"), QStringLiteral("3")},
+                                         {QStringLiteral("angle"), QStringLiteral("45")}, {QStringLiteral("name"), QStringLiteral("Z1")}}));
+    QVERIFY(!point(QStringLiteral("Z1")).isEmpty());
+
+    QJsonArray steps = ok(QStringLiteral("undo")).value(QStringLiteral("steps")).toArray();
+    QCOMPARE(steps.size(), 1);
+    QVERIFY2(steps.at(0).toString().contains(QStringLiteral("Z1")), qPrintable(steps.at(0).toString()));
+    QVERIFY(point(QStringLiteral("Z1")).isEmpty());
+    QCOMPARE(ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt(), before);
+
+    steps = ok(QStringLiteral("redo")).value(QStringLiteral("steps")).toArray();
+    QCOMPARE(steps.size(), 1);
+    QVERIFY(!point(QStringLiteral("Z1")).isEmpty());
+
+    // Several steps at once, and the limits of the tool.
+    ok(QStringLiteral("add_point"), obj({{QStringLiteral("type"), QStringLiteral("endLine")}, {QStringLiteral("base_point_id"), 1}, {QStringLiteral("length"), QStringLiteral("4")},
+                                         {QStringLiteral("angle"), QStringLiteral("90")}, {QStringLiteral("name"), QStringLiteral("Z2")}}));
+    QCOMPARE(ok(QStringLiteral("undo"), obj({{QStringLiteral("steps"), 2}})).value(QStringLiteral("steps")).toArray().size(), 2);
+    QVERIFY(point(QStringLiteral("Z1")).isEmpty() && point(QStringLiteral("Z2")).isEmpty());
+    QVERIFY(fails(QStringLiteral("undo"), obj({{QStringLiteral("steps"), 0}})).contains(QStringLiteral("1 to 50")));
+    QVERIFY(fails(QStringLiteral("redo"), obj({{QStringLiteral("steps"), 51}})).contains(QStringLiteral("1 to 50")));
+    QCOMPARE(ok(QStringLiteral("redo"), obj({{QStringLiteral("steps"), 5}})).value(QStringLiteral("steps")).toArray().size(), 2);   // only two to redo
+    QVERIFY(fails(QStringLiteral("redo")).contains(QStringLiteral("nothing to redo")));
+    // Leave the pattern as it was for the other tests.
+    ok(QStringLiteral("undo"), obj({{QStringLiteral("steps"), 2}}));
+    QCOMPARE(ok(QStringLiteral("list_objects")).value(QStringLiteral("total")).toInt(), before);
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -993,4 +1025,96 @@ void TST_McpApp::screenshotReturnsAPng()
     QVERIFY(png.startsWith("\x89PNG"));
     QVERIFY(png.size() > 200);
     QVERIFY(fails(QStringLiteral("screenshot"), obj({{QStringLiteral("area"), QStringLiteral("nope")}})).contains(QStringLiteral("area")));
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::measurementValuesCanBeChanged()
+{
+    // A pattern that comes with an individual measurement file: the trousers of the other test projects. They are
+    // copied (the measurement path is rewritten to the copy), because the test changes the measurement file.
+    const QString source = QString::fromUtf8(SRCDIR) + QLatin1String("../CollectionTest/share/trousers/");
+    const QString folder = m_workDir.path() + QLatin1String("/meas");
+    QVERIFY(QDir().mkpath(folder));
+    QVERIFY(QFile::copy(source + QLatin1String("trousers_v0_6_8.smis"), folder + QLatin1String("/trousers.smis")));
+    QFile pattern(source + QLatin1String("trousers_v0_6_8.sm2d"));
+    QVERIFY(pattern.open(QIODevice::ReadOnly));
+    QString xml = QString::fromUtf8(pattern.readAll());
+    xml.replace(QRegularExpression(QStringLiteral("<measurements>[^<]*</measurements>")),
+                QStringLiteral("<measurements>trousers.smis</measurements>"));
+    QFile copy(folder + QLatin1String("/trousers.sm2d"));
+    QVERIFY(copy.open(QIODevice::WriteOnly));
+    copy.write(xml.toUtf8());
+    copy.close();
+    const QString measurementFile = folder + QLatin1String("/trousers.smis");
+    auto fileValue = [&measurementFile]()
+    {
+        QFile f(measurementFile);
+        if (!f.open(QIODevice::ReadOnly))
+        {
+            return QString();
+        }
+        const QRegularExpressionMatch match = QRegularExpression(QStringLiteral("name=\"waist_circ\"[^>]*value=\"([^\"]*)\"|value=\"([^\"]*)\"[^>]*name=\"waist_circ\""))
+                                                  .match(QString::fromUtf8(f.readAll()));
+        return match.captured(1).isEmpty() ? match.captured(2) : match.captured(1);
+    };
+    auto measurement = [this](const QString &name)
+    {
+        for (const QJsonValue &m : ok(QStringLiteral("list_variables")).value(QStringLiteral("measurements")).toArray())
+        {
+            if (m.toObject().value(QStringLiteral("name")).toString() == name)
+            {
+                return m.toObject().value(QStringLiteral("value")).toDouble(-1);
+            }
+        }
+        return -1.0;
+    };
+    auto variable = [this](const QString &name)
+    {
+        for (const QJsonValue &v : ok(QStringLiteral("list_variables")).value(QStringLiteral("variables")).toArray())
+        {
+            if (v.toObject().value(QStringLiteral("name")).toString() == name)
+            {
+                return v.toObject().value(QStringLiteral("value")).toDouble(-1);
+            }
+        }
+        return -1.0;
+    };
+
+    stopApp();
+    QVERIFY(startApp());
+    // Without a measurement file there is nothing to change.
+    QVERIFY(fails(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("waist_circ")}, {QStringLiteral("value"), 90}}))
+                .contains(QStringLiteral("no measurement")));
+    ok(QStringLiteral("open_pattern"), obj({{QStringLiteral("path"), folder + QLatin1String("/trousers.sm2d")}}));
+
+    // waist_circ is 84 and WaistCircumference (= waist_circ + 2) is 86.
+    QCOMPARE(measurement(QStringLiteral("waist_circ")), 84.0);
+    QCOMPARE(variable(QStringLiteral("WaistCircumference")), 86.0);
+    QCOMPARE(fileValue(), QStringLiteral("84"));
+
+    const QJsonObject changed = ok(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("waist_circ")}, {QStringLiteral("value"), 90}}));
+    QCOMPARE(changed.value(QStringLiteral("oldValue")).toDouble(), 84.0);
+    QCOMPARE(changed.value(QStringLiteral("value")).toDouble(), 90.0);
+    QCOMPARE(measurement(QStringLiteral("waist_circ")), 90.0);
+    QCOMPARE(variable(QStringLiteral("WaistCircumference")), 92.0);   // the formulas that use it follow
+    QCOMPARE(fileValue(), QStringLiteral("90"));                      // and it really is in the file
+
+    // Undo writes the old value back to the file, redo writes the new one again.
+    QVERIFY(ok(QStringLiteral("undo")).value(QStringLiteral("steps")).toArray().at(0).toString().contains(QStringLiteral("waist_circ")));
+    QCOMPARE(measurement(QStringLiteral("waist_circ")), 84.0);
+    QCOMPARE(variable(QStringLiteral("WaistCircumference")), 86.0);
+    QCOMPARE(fileValue(), QStringLiteral("84"));
+    ok(QStringLiteral("redo"));
+    QCOMPARE(measurement(QStringLiteral("waist_circ")), 90.0);
+    QCOMPARE(fileValue(), QStringLiteral("90"));
+    ok(QStringLiteral("undo"));
+    QCOMPARE(fileValue(), QStringLiteral("84"));
+
+    // Refused: unknown names, things that are not measurements, bad values.
+    QVERIFY(fails(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("no_such")}, {QStringLiteral("value"), 1}})).contains(QStringLiteral("no measurement named")));
+    QVERIFY(fails(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("WaistCircumference")}, {QStringLiteral("value"), 1}})).contains(QStringLiteral("no measurement named")));
+    QVERIFY(fails(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("waist_circ")}, {QStringLiteral("value"), -1}})).contains(QStringLiteral("0 to 100000")));
+    QVERIFY(fails(QStringLiteral("set_measurement"), obj({{QStringLiteral("name"), QStringLiteral("waist_circ")}})).contains(QStringLiteral("required")));
+    QCOMPARE(measurement(QStringLiteral("waist_circ")), 84.0);
+    QCOMPARE(fileValue(), QStringLiteral("84"));
 }

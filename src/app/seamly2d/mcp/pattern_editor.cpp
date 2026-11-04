@@ -3301,6 +3301,70 @@ McpToolResult PatternEditor::setNotch(const QJsonObject &arguments)
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::setMeasurement(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    const QString name = stringArg(arguments, "name");
+    const QJsonValue value = arguments.value(QStringLiteral("value"));
+    if (name.isEmpty() || !value.isDouble())
+    {
+        return McpToolResult::error(QStringLiteral("'name' (a measurement from list_variables) and 'value' (a number "
+                                                   "in the pattern unit) are required."));
+    }
+    QString error;
+    const QJsonObject result = window->mcpSetMeasurement(name, value.toDouble(), error);
+    if (!error.isEmpty())
+    {
+        return McpToolResult::error(error);
+    }
+    return McpToolResult::ok(QStringLiteral("Changed measurement %1 from %2 to %3 %4 in %5. Undo writes the old "
+                                            "value back.")
+                                 .arg(name).arg(result.value(QStringLiteral("oldValue")).toDouble())
+                                 .arg(result.value(QStringLiteral("value")).toDouble())
+                                 .arg(result.value(QStringLiteral("unit")).toString(),
+                                      result.value(QStringLiteral("file")).toString()),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::undoRedo(const QJsonObject &arguments, bool undo)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    const QJsonValue stepsValue = arguments.value(QStringLiteral("steps"));
+    const int steps = stepsValue.isDouble() ? static_cast<int>(stepsValue.toDouble()) : 1;
+    if (steps < 1 || steps > 50)
+    {
+        return McpToolResult::error(QStringLiteral("'steps' must be from 1 to 50."));
+    }
+    QJsonArray done;
+    for (int i = 0; i < steps; ++i)
+    {
+        const QString text = window->mcpUndo(undo);
+        if (text.isEmpty())
+        {
+            break;
+        }
+        done.append(text);
+    }
+    if (done.isEmpty())
+    {
+        return McpToolResult::error(undo ? QStringLiteral("There is nothing to undo.")
+                                         : QStringLiteral("There is nothing to redo."));
+    }
+    return McpToolResult::ok(QStringLiteral("%1 %2 step(s).").arg(undo ? QStringLiteral("Undid") : QStringLiteral("Redid"))
+                                 .arg(done.size()),
+                             QJsonObject{{QStringLiteral("steps"), done}});
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::addDraftBlock(const QJsonObject &arguments)
 {
     MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
@@ -3879,6 +3943,63 @@ McpTool PatternEditor::setNotchTool()
                                    {QStringLiteral("required"), QJsonArray{QStringLiteral("piece_id"),
                                                                            QStringLiteral("point_id")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setNotch(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::setMeasurementTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("set_measurement");
+    tool.description =
+        QStringLiteral("Changes the value of a measurement (for example waist_circ) in the measurement file of the "
+                       "pattern; everything that depends on it follows at once. 'value' is in the pattern unit. The "
+                       "measurement file belongs to the person and is shared by every pattern that uses it, so "
+                       "Seamly2D asks the user to confirm the change (and the first change to a file in a session "
+                       "may therefore take a moment). One Undo step, which writes the old value back to the file. "
+                       "Only individual measurement files, and only measurements that are stored in the file; see "
+                       "list_variables for names and current values.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("name"),
+                                                 stringProperty(QStringLiteral("Measurement name, e.g. waist_circ."))},
+                                                {QStringLiteral("value"),
+                                                 QJsonObject{{QStringLiteral("type"), QStringLiteral("number")},
+                                                             {QStringLiteral("description"),
+                                                              QStringLiteral("New value in the pattern unit.")}}}}},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("name"), QStringLiteral("value")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setMeasurement(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::undoTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("undo");
+    tool.description = QStringLiteral("Undoes the most recent step on the undo stack (the same as Ctrl+Z; it can be a "
+                                      "step the user made by hand), 'steps' times (default 1). The result lists what "
+                                      "was undone. Use redo to bring it back.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("steps"), idProperty(QStringLiteral("How many steps "
+                                                                                                     "(1-50)."))}}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::undoRedo(arguments, true); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::redoTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("redo");
+    tool.description = QStringLiteral("Redoes the step that was undone last (the same as Ctrl+Y), 'steps' times "
+                                      "(default 1).");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("steps"), idProperty(QStringLiteral("How many steps "
+                                                                                                     "(1-50)."))}}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::undoRedo(arguments, false); };
     return tool;
 }
 
