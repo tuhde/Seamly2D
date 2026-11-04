@@ -25,6 +25,10 @@
 
 #include "pattern_editor.h"
 
+#include <QBuffer>
+#include <QGraphicsScene>
+#include <QImage>
+#include <QPainter>
 #include <QDomElement>
 #include <QDomNamedNodeMap>
 #include <QHash>
@@ -1581,15 +1585,27 @@ double polygonPerimeter(const QVector<QPointF> &points)
 
 QJsonObject pieceJson(const VContainer *data, quint32 id, const VPiece &piece)
 {
-    const QVector<QPointF> outline = piece.mainPathPoints(data);
-    const double unitFactor = qApp->fromPixel(1.0);
-    return QJsonObject{{QStringLiteral("id"), static_cast<qint64>(id)},
+    QJsonObject result{{QStringLiteral("id"), static_cast<qint64>(id)},
                        {QStringLiteral("name"), piece.GetName()},
                        {QStringLiteral("nodes"), piece.GetPath().nodeCount()},
                        {QStringLiteral("seamAllowance"), piece.hasSeamAllowance()},
-                       {QStringLiteral("seamAllowanceWidth"), round3(piece.GetSAWidth())},
-                       {QStringLiteral("area"), round3(polygonArea(outline) * unitFactor * unitFactor)},
-                       {QStringLiteral("perimeter"), round3(polygonPerimeter(outline) * unitFactor)}};
+                       {QStringLiteral("seamAllowanceWidth"), round3(piece.GetSAWidth())}};
+    // A piece can belong to another draft block than the active one; its tool keeps the data it needs (this is also
+    // what the layout code uses).
+    VAbstractTool *tool = qobject_cast<VAbstractTool *>(VAbstractPattern::getTool(id));
+    const VContainer *pieceData = tool != nullptr ? tool->getData() : data;
+    try
+    {
+        const QVector<QPointF> outline = piece.mainPathPoints(pieceData);
+        const double unitFactor = qApp->fromPixel(1.0);
+        result.insert(QStringLiteral("area"), round3(polygonArea(outline) * unitFactor * unitFactor));
+        result.insert(QStringLiteral("perimeter"), round3(polygonPerimeter(outline) * unitFactor));
+    }
+    catch (const VException &e)
+    {
+        result.insert(QStringLiteral("measureError"), e.ErrorMessage());
+    }
+    return result;
 }
 } // namespace
 
@@ -1927,6 +1943,68 @@ McpToolResult PatternEditor::exportLayout(const QJsonObject &arguments)
                                  .arg(result.value(QStringLiteral("files")).toArray().size())
                                  .arg(result.value(QStringLiteral("directory")).toString()),
                              result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::screenshot(const QJsonObject &arguments)
+{
+    QGraphicsScene *scene = qApp->getCurrentScene();
+    VMainGraphicsView *view = qApp->getSceneView();
+    if (scene == nullptr || view == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("No pattern is open in Seamly2D."));
+    }
+    const QString area = stringArg(arguments, "area").isEmpty() ? QStringLiteral("drawing") : stringArg(arguments, "area");
+    if (area != QLatin1String("drawing") && area != QLatin1String("window"))
+    {
+        return McpToolResult::error(QStringLiteral("'area' must be \"drawing\" (everything, independent of the zoom) "
+                                                   "or \"window\" (what the user currently sees)."));
+    }
+    const int maxSize = qBound(200, arguments.contains(QStringLiteral("max_size"))
+                                        ? arguments.value(QStringLiteral("max_size")).toInt(1000) : 1000, 2000);
+
+    QImage image;
+    if (area == QLatin1String("window"))
+    {
+        image = view->viewport()->grab().toImage();
+        if (qMax(image.width(), image.height()) > maxSize)
+        {
+            image = image.scaled(maxSize, maxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        }
+    }
+    else
+    {
+        // Render the scene itself so that the result does not depend on the window size or zoom.
+        QRectF source = scene->itemsBoundingRect();
+        if (source.isEmpty() || !source.isValid())
+        {
+            return McpToolResult::error(QStringLiteral("There is nothing to show yet."));
+        }
+        const double margin = qMax(source.width(), source.height()) * 0.04;
+        source.adjust(-margin, -margin, margin, margin);
+        const double scale = maxSize / qMax(source.width(), source.height());
+        const QSize size(qMax(1, qRound(source.width() * scale)), qMax(1, qRound(source.height() * scale)));
+        image = QImage(size, QImage::Format_ARGB32);
+        image.fill(Qt::white);
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::TextAntialiasing);
+        scene->render(&painter, QRectF(QPointF(0, 0), QSizeF(size)), source, Qt::KeepAspectRatio);
+        painter.end();
+    }
+
+    QByteArray png;
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    if (!image.save(&buffer, "PNG"))
+    {
+        return McpToolResult::error(QStringLiteral("The image could not be created."));
+    }
+    McpToolResult result = McpToolResult::ok(QStringLiteral("Screenshot (%1, %2 x %3 px). The y axis points down; "
+                                                            "x grows to the right.")
+                                                 .arg(area).arg(image.width()).arg(image.height()));
+    result.imagePng = png;
+    return result;
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -2354,6 +2432,32 @@ McpTool PatternEditor::exportLayoutTool()
                                    {QStringLiteral("properties"), properties},
                                    {QStringLiteral("required"), QJsonArray{QStringLiteral("directory")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::exportLayout(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::screenshotTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("screenshot");
+    tool.description =
+        QStringLiteral("Returns an image of what is drawn, so that you can check your work visually. Shows the view "
+                       "that is currently active (draft drawing, pattern pieces or layout; switch with show_mode). "
+                       "area \"drawing\" (default) renders everything, independent of the user's zoom; \"window\" "
+                       "returns what the user currently sees. The image is at most max_size pixels on its longer "
+                       "side (default 1000). Does not change the pattern.");
+    tool.inputSchema = QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("area"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                                  {QStringLiteral("enum"), QJsonArray{QStringLiteral("drawing"),
+                                                                      QStringLiteral("window")}}}},
+                     {QStringLiteral("max_size"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")},
+                                  {QStringLiteral("minimum"), 200}, {QStringLiteral("maximum"), 2000}}}}}};
+    tool.readOnly = true;
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::screenshot(arguments); };
     return tool;
 }
 

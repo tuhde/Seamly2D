@@ -581,9 +581,15 @@ QJsonObject McpServer::handleToolsCall(const QJsonObject &params, QJsonObject *p
                                     : QJsonDocument(result.structured.toObject()).toJson(QJsonDocument::Compact);
         text += (text.isEmpty() ? QString() : QStringLiteral("\n")) + QString::fromUtf8(json);
     }
-    QJsonObject out{{QStringLiteral("content"),
-                     QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
-                                            {QStringLiteral("text"), text}}}},
+    QJsonArray content{QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                                   {QStringLiteral("text"), text}}};
+    if (!result.imagePng.isEmpty())
+    {
+        content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("image")},
+                                   {QStringLiteral("data"), QString::fromLatin1(result.imagePng.toBase64())},
+                                   {QStringLiteral("mimeType"), QStringLiteral("image/png")}});
+    }
+    QJsonObject out{{QStringLiteral("content"), content},
                     {QStringLiteral("isError"), result.isError}};
     if (result.structured.isObject())
     {

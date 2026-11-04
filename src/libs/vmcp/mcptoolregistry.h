@@ -26,6 +26,7 @@
 #ifndef MCPTOOLREGISTRY_H
 #define MCPTOOLREGISTRY_H
 
+#include <QByteArray>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
@@ -43,6 +44,7 @@ struct McpToolResult
     bool    isError = false;
     QString text;               ///< Human/model readable message.
     QJsonValue structured;      ///< Optional machine readable payload; serialised into the text when set.
+    QByteArray imagePng;        ///< Optional PNG image, returned to the client as an MCP image content block.
 
     static McpToolResult ok(const QString &text, const QJsonValue &structured = QJsonValue());
     static McpToolResult error(const QString &text);

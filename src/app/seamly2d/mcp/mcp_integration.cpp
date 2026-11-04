@@ -44,7 +44,7 @@ const char *const kInstructions =
     "yet, create one with add_draft_block (it also sets the unit). Then change the pattern (add_point, add_line, add_curve, add_arc) and "
     "check the result with list_objects. Points refer to earlier points by their id. A drawing becomes a pattern "
     "piece (what gets laid out and exported) with add_piece, which takes the outline's point ids in order. Call "
-    "fit_view after drawing, and show_mode to switch between the draft and piece view, so that the user sees the "
+    "fit_view after drawing, use screenshot to look at the result yourself, and show_mode to switch between the draft and piece view, so that the user sees the "
     "result. Save the work with save_pattern and write printable/cuttable files with export_layout; Seamly2D asks the user to confirm writing to a file or folder.";
 }
 
@@ -214,6 +214,7 @@ void McpIntegration::registerTools()
     m_registry.registerTool(PatternEditor::exportLayoutTool());
     m_registry.registerTool(PatternEditor::savePatternTool());
     m_registry.registerTool(PatternEditor::openPatternTool());
+    m_registry.registerTool(PatternEditor::screenshotTool());
     m_registry.registerTool(PatternEditor::fitViewTool());
 }
 

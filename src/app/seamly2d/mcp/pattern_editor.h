@@ -80,12 +80,16 @@ public:
     /// Tool `export_layout`: writes the pieces as pdf/svg/png/... (arranged on pages, or one by one).
     static McpToolResult exportLayout(const QJsonObject &arguments);
 
+    /// Tool `screenshot`: an image of the current view, returned as MCP image content.
+    static McpToolResult screenshot(const QJsonObject &arguments);
+
     /// Tool `add_draft_block`: creates a draft block with its base point (for the first block also sets the unit).
     static McpToolResult addDraftBlock(const QJsonObject &arguments);
 
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool screenshotTool();
     static McpTool exportLayoutTool();
     static McpTool savePatternTool();
     static McpTool openPatternTool();
