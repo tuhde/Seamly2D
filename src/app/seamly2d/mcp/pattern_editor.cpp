@@ -31,13 +31,16 @@
 #include <QJsonArray>
 #include <QMap>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSharedPointer>
 #include <QVector>
+#include <QUndoCommand>
 #include <QUndoStack>
 #include <QtMath>
 
 #include "../core/application_2d.h"
 #include "../mainwindow.h"
+#include "../xml/vpattern.h"
 #include "../../libs/ifc/exception/vexception.h"
 #include "../../libs/ifc/ifcdef.h"
 #include "../../libs/ifc/xml/vabstractpattern.h"
@@ -46,6 +49,7 @@
 #include "../../libs/vpatterndb/calculator.h"
 #include "../../libs/vpatterndb/vcontainer.h"
 #include "../../libs/vpatterndb/variables/vinternalvariable.h"
+#include "../../libs/vpatterndb/variables/custom_variable.h"
 #include "../../libs/vpatterndb/variables/vlinelength.h"
 #include "../../libs/vtools/tools/drawTools/vtoolline.h"
 #include "../../libs/vtools/tools/vabstracttool.h"
@@ -933,6 +937,359 @@ McpToolResult PatternEditor::updateObject(const QJsonObject &arguments)
                              result);
 }
 
+namespace
+{
+/// Internal name of a custom variable ("increment") as used in formulas: "#" + name.
+QString internalVariableName(const QString &name)
+{
+    return CustomIncrSign + name;
+}
+
+/// Variables are referenced in formulas as #name.
+const QRegularExpression &variableReference()
+{
+    static const QRegularExpression expression(QStringLiteral("#[\\p{L}_][\\p{L}\\p{N}_]*"));
+    return expression;
+}
+
+QStringList referencesIn(const QString &formula)
+{
+    QStringList result;
+    QRegularExpressionMatchIterator it = variableReference().globalMatch(formula);
+    while (it.hasNext())
+    {
+        result << it.next().captured();
+    }
+    return result;
+}
+
+/// True if giving `name` the formula `formula` would make the variables depend on each other in a circle.
+bool createsCycle(const VContainer *data, const QString &name, const QString &formula)
+{
+    QMap<QString, QStringList> graph;
+    const QMap<QString, QSharedPointer<CustomVariable>> all = data->variablesData();
+    for (auto it = all.constBegin(); it != all.constEnd(); ++it)
+    {
+        graph.insert(it.key(), referencesIn(it.value()->GetFormula()));
+    }
+    graph.insert(name, referencesIn(formula));
+
+    QStringList stack = graph.value(name);
+    QSet<QString> seen;
+    while (!stack.isEmpty())
+    {
+        const QString current = stack.takeLast();
+        if (current == name)
+        {
+            return true;
+        }
+        if (!seen.contains(current))
+        {
+            seen.insert(current);
+            stack << graph.value(current);
+        }
+    }
+    return false;
+}
+
+/// State of one custom variable, for undo.
+struct VariableState
+{
+    bool    exists = false;
+    QString formula;
+    QString description;
+    int     index = 0;      ///< position among the variables
+};
+
+/// Create / change / delete a custom variable as one undo step. The variables dialog edits the pattern directly
+/// without the undo stack, so this command does the same edits through VPattern and re-parses like the dialog does.
+class VariableCommand : public QUndoCommand
+{
+public:
+    VariableCommand(VPattern *doc, const QString &name, const VariableState &before, const VariableState &after,
+                    const QString &text)
+        : QUndoCommand(text), m_doc(doc), m_name(name), m_before(before), m_after(after)
+    {}
+
+    void redo() override { apply(m_after, m_before); }
+    void undo() override { apply(m_before, m_after); }
+
+private:
+    void apply(const VariableState &target, const VariableState &current)
+    {
+        if (!target.exists)
+        {
+            if (current.exists)
+            {
+                m_doc->removeCustomVariable(m_name);
+            }
+        }
+        else
+        {
+            if (!current.exists)
+            {
+                m_doc->addEmptyCustomVariable(m_name);   // appended; move it back to its old position
+                const int count = m_doc->elementsByTagName(VAbstractPattern::TagVariables).at(0).childNodes().count();
+                for (int i = count - 1; i > target.index; --i)
+                {
+                    m_doc->moveVariableUp(m_name);
+                }
+            }
+            m_doc->setVariableFormula(m_name, target.formula);
+            m_doc->setVariableDescription(m_name, target.description);
+        }
+        m_doc->LiteParseVariables();
+        m_doc->LiteParseTree(Document::LiteParse);
+    }
+
+    VPattern      *m_doc;
+    QString        m_name;
+    VariableState  m_before;
+    VariableState  m_after;
+};
+
+/// The variable's state as stored now (exists == false if there is none).
+VariableState currentState(const VContainer *data, const QString &internalName)
+{
+    VariableState state;
+    const QMap<QString, QSharedPointer<CustomVariable>> all = data->variablesData();
+    int index = 0;
+    // Variables are kept in file order by their index.
+    QMap<quint32, QString> byIndex;
+    for (auto it = all.constBegin(); it != all.constEnd(); ++it)
+    {
+        byIndex.insert(it.value()->getIndex(), it.key());
+    }
+    for (auto it = byIndex.constBegin(); it != byIndex.constEnd(); ++it, ++index)
+    {
+        if (it.value() == internalName)
+        {
+            const QSharedPointer<CustomVariable> variable = all.value(internalName);
+            state.exists = true;
+            state.formula = variable->GetFormula();
+            state.description = variable->GetDescription();
+            state.index = index;
+            break;
+        }
+    }
+    if (!state.exists)
+    {
+        state.index = all.size();
+    }
+    return state;
+}
+
+/// Validates a variable name given without the leading "#". Returns an empty string if it is fine.
+QString checkVariableName(const QString &name)
+{
+    static const QRegularExpression valid(QStringLiteral("^[\\p{L}_][\\p{L}\\p{N}_]*$"));
+    if (!name.contains(valid))
+    {
+        return QStringLiteral("The variable name \"%1\" is not valid: use letters, digits and underscores, starting "
+                              "with a letter or underscore, and do not type the leading #.").arg(name);
+    }
+    return QString();
+}
+
+VPattern *currentPattern()
+{
+    return qobject_cast<VPattern *>(qApp->getCurrentDocument());
+}
+} // namespace
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::listVariables(const QJsonObject &arguments)
+{
+    Q_UNUSED(arguments)
+    VContainer *data = qApp->getCurrentData();
+    if (data == nullptr || currentPattern() == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("No pattern is open in Seamly2D."));
+    }
+
+    QJsonArray variables;
+    const QMap<QString, QSharedPointer<CustomVariable>> all = data->variablesData();
+    QMap<quint32, QString> byIndex;
+    for (auto it = all.constBegin(); it != all.constEnd(); ++it)
+    {
+        byIndex.insert(it.value()->getIndex(), it.key());
+    }
+    for (auto it = byIndex.constBegin(); it != byIndex.constEnd(); ++it)
+    {
+        const QSharedPointer<CustomVariable> variable = all.value(it.value());
+        variables.append(QJsonObject{{QStringLiteral("name"), variable->GetName().mid(CustomIncrSign.size())},
+                                     {QStringLiteral("reference"), variable->GetName()},
+                                     {QStringLiteral("formula"), variable->GetFormula()},
+                                     {QStringLiteral("value"), round3(*variable->GetValue())},
+                                     {QStringLiteral("valid"), variable->IsFormulaOk()},
+                                     {QStringLiteral("description"), variable->GetDescription()}});
+    }
+
+    QJsonArray measurements;
+    const QHash<QString, QSharedPointer<VInternalVariable>> *all2 = data->DataVariables();
+    QStringList names;
+    for (auto it = all2->constBegin(); it != all2->constEnd(); ++it)
+    {
+        if (it.value()->GetType() == VarType::Measurement)
+        {
+            names << it.key();
+        }
+    }
+    names.sort();
+    for (const QString &name : names)
+    {
+        measurements.append(QJsonObject{{QStringLiteral("name"), name},
+                                        {QStringLiteral("value"), round3(static_cast<const VInternalVariable *>(all2->value(name).data())->GetValue())}});
+    }
+
+    return McpToolResult::ok(QStringLiteral("%1 variable(s), %2 measurement(s) (unit: %3). In formulas write a "
+                                            "variable as its 'reference' (#name) and a measurement by its name.")
+                                 .arg(variables.size()).arg(measurements.size(), 0, 10)
+                                 .arg(UnitsToStr(qApp->patternUnit())),
+                             QJsonObject{{QStringLiteral("unit"), UnitsToStr(qApp->patternUnit())},
+                                         {QStringLiteral("variables"), variables},
+                                         {QStringLiteral("measurements"), measurements}});
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::setVariable(const QJsonObject &arguments)
+{
+    VPattern *doc = currentPattern();
+    VContainer *data = qApp->getCurrentData();
+    if (doc == nullptr || data == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("No pattern is open in Seamly2D."));
+    }
+
+    const QString name = stringArg(arguments, "name");
+    const QString nameError = checkVariableName(name);
+    if (!nameError.isEmpty())
+    {
+        return McpToolResult::error(nameError);
+    }
+    const QString internal = internalVariableName(name);
+    const VariableState before = currentState(data, internal);
+
+    // A new variable needs a formula; an existing one keeps what is not given.
+    QString formula = stringArg(arguments, "formula");
+    if (arguments.value(QStringLiteral("formula")).isDouble())
+    {
+        formula = QString::number(arguments.value(QStringLiteral("formula")).toDouble());
+    }
+    if (formula.isEmpty())
+    {
+        if (!before.exists)
+        {
+            return McpToolResult::error(QStringLiteral("'formula' is required for a new variable (a number or a "
+                                                       "formula such as \"waist/4\")."));
+        }
+        formula = before.formula;
+    }
+    if (!before.exists && !VContainer::IsUnique(internal))
+    {
+        return McpToolResult::error(QStringLiteral("The name \"%1\" is already used.").arg(name));
+    }
+    QString description = before.description;
+    if (arguments.contains(QStringLiteral("description")))
+    {
+        description = arguments.value(QStringLiteral("description")).toString();
+    }
+
+    QString error;
+    double value = 0;
+    // Evaluate against the existing variables, but never against the variable's own current value.
+    QHash<QString, QSharedPointer<VInternalVariable>> variables = *data->DataVariables();
+    variables.remove(internal);
+    if (!checkFormula(variables, QStringLiteral("formula"), formula, value, error))
+    {
+        return McpToolResult::error(error);
+    }
+    if (createsCycle(data, internal, formula))
+    {
+        return McpToolResult::error(QStringLiteral("The formula would make \"%1\" depend on itself (directly or "
+                                                   "through other variables).").arg(name));
+    }
+
+    VariableState after;
+    after.exists = true;
+    after.formula = formula;
+    after.description = description;
+    after.index = before.index;
+
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->push(new VariableCommand(doc, internal, before, after,
+                                    QObject::tr("Claude: %1 variable %2").arg(before.exists ? QObject::tr("change")
+                                                                                            : QObject::tr("add"), name)));
+
+    // Read the result back from the freshly parsed data.
+    const QSharedPointer<CustomVariable> variable = qApp->getCurrentData()->getVariable<CustomVariable>(internal);
+    return McpToolResult::ok(QStringLiteral("%1 variable %2 = %3 (formula \"%4\"). Use it in formulas as %5. Undo "
+                                            "restores the previous state.")
+                                 .arg(before.exists ? QStringLiteral("Changed") : QStringLiteral("Added"), name)
+                                 .arg(round3(*variable->GetValue())).arg(formula, internal),
+                             QJsonObject{{QStringLiteral("name"), name},
+                                         {QStringLiteral("reference"), internal},
+                                         {QStringLiteral("formula"), formula},
+                                         {QStringLiteral("value"), round3(*variable->GetValue())},
+                                         {QStringLiteral("description"), description}});
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::deleteVariable(const QJsonObject &arguments)
+{
+    VPattern *doc = currentPattern();
+    VContainer *data = qApp->getCurrentData();
+    if (doc == nullptr || data == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("No pattern is open in Seamly2D."));
+    }
+    const QString name = stringArg(arguments, "name");
+    const QString internal = internalVariableName(name);
+    const VariableState before = currentState(data, internal);
+    if (!before.exists)
+    {
+        return McpToolResult::error(QStringLiteral("There is no variable named \"%1\" (see list_variables).")
+                                        .arg(name));
+    }
+
+    // Refuse while any formula still uses it: tools and other variables.
+    const QRegularExpression used(QRegularExpression::escape(internal) + QStringLiteral("(?![\\p{L}\\p{N}_])"));
+    QStringList places;
+    const QVector<VFormulaField> expressions = doc->ListExpressions();
+    for (const VFormulaField &field : expressions)
+    {
+        // Variables are checked separately below.
+        if (field.element.tagName() != QLatin1String("variable") && field.expression.contains(used))
+        {
+            const QString label = field.element.attribute(QStringLiteral("name")).isEmpty()
+                                      ? field.element.tagName() : field.element.attribute(QStringLiteral("name"));
+            places << QStringLiteral("%1 (id %2, %3)").arg(label, field.element.attribute(QStringLiteral("id")),
+                                                          field.attribute);
+        }
+    }
+    const QMap<QString, QSharedPointer<CustomVariable>> all = data->variablesData();
+    for (auto it = all.constBegin(); it != all.constEnd(); ++it)
+    {
+        if (it.key() != internal && it.value()->GetFormula().contains(used))
+        {
+            places << QStringLiteral("variable %1").arg(it.value()->GetName());
+        }
+    }
+    if (!places.isEmpty())
+    {
+        places.removeDuplicates();
+        return McpToolResult::error(QStringLiteral("The variable \"%1\" is still used by: %2. Change those first.")
+                                        .arg(name, places.join(QStringLiteral(", "))));
+    }
+
+    VariableState after;   // exists == false
+    after.index = before.index;
+    qApp->getUndoStack()->push(new VariableCommand(doc, internal, before, after,
+                                                   QObject::tr("Claude: delete variable %1").arg(name)));
+    return McpToolResult::ok(QStringLiteral("Deleted variable %1. Undo restores it.").arg(name),
+                             QJsonObject{{QStringLiteral("name"), name}});
+}
+
 //---------------------------------------------------------------------------------------------------------------------
 McpToolResult PatternEditor::addDraftBlock(const QJsonObject &arguments)
 {
@@ -1007,6 +1364,70 @@ McpTool PatternEditor::updateObjectTool()
                                    {QStringLiteral("properties"), properties},
                                    {QStringLiteral("required"), QJsonArray{QStringLiteral("id")}}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::updateObject(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::listVariablesTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("list_variables");
+    tool.description =
+        QStringLiteral("Lists the variables of the pattern: the custom variables (increments) with name, formula, "
+                       "value and description, and the measurements of the loaded measurement file with their "
+                       "values (pattern unit). In formulas a custom variable is written as its 'reference' (#name) "
+                       "and a measurement by its name. Read this before writing formulas that should depend on "
+                       "sizes.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), QJsonObject()}};
+    tool.readOnly = true;
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::listVariables(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::setVariableTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("set_variable");
+    tool.description =
+        QStringLiteral("Creates a custom variable (increment) or changes an existing one, so that sizes can be "
+                       "changed in one place: formulas of points refer to it as #name and follow when it changes. "
+                       "'name' is given without the #. 'formula' is a number or a formula that may use "
+                       "measurements and other variables (written #othername); it is required for a new variable "
+                       "and optional when changing an existing one's description. One Undo step. Invalid "
+                       "formulas, names and circular references leave the pattern unchanged.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("name"),
+                                                 stringProperty(QStringLiteral("Variable name without #: letters, "
+                                                                               "digits, underscore. Example: "
+                                                                               "\"skirt_length\"."))},
+                                                {QStringLiteral("formula"),
+                                                 stringProperty(QStringLiteral("Number or formula in the pattern "
+                                                                               "unit. Example: \"60\" or "
+                                                                               "\"#waist_ease*2\"."))},
+                                                {QStringLiteral("description"),
+                                                 stringProperty(QStringLiteral("Optional description."))}}},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("name")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::setVariable(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::deleteVariableTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("delete_variable");
+    tool.description =
+        QStringLiteral("Deletes a custom variable. One Undo step. Refused, naming the places, while a formula of "
+                       "a point, line or another variable still uses it.");
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"),
+                                    QJsonObject{{QStringLiteral("name"),
+                                                 stringProperty(QStringLiteral("Variable name without #."))}}},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("name")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::deleteVariable(arguments); };
     return tool;
 }
 

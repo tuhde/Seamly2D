@@ -58,12 +58,20 @@ public:
     /// Tool `update_object`: changes parameters (formulas, references, name, base point position) of an object.
     static McpToolResult updateObject(const QJsonObject &arguments);
 
+    /// Tools `list_variables`, `set_variable`, `delete_variable`: custom variables (increments) and measurements.
+    static McpToolResult listVariables(const QJsonObject &arguments);
+    static McpToolResult setVariable(const QJsonObject &arguments);
+    static McpToolResult deleteVariable(const QJsonObject &arguments);
+
     /// Tool `add_draft_block`: creates a draft block with its base point (for the first block also sets the unit).
     static McpToolResult addDraftBlock(const QJsonObject &arguments);
 
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool listVariablesTool();
+    static McpTool setVariableTool();
+    static McpTool deleteVariableTool();
     static McpTool deleteObjectTool();
     static McpTool updateObjectTool();
     static McpTool addLineTool();

@@ -198,6 +198,9 @@ void McpIntegration::registerTools()
     m_registry.registerTool(PatternEditor::listObjectsTool());
     m_registry.registerTool(PatternEditor::addPointTool());
     m_registry.registerTool(PatternEditor::addLineTool());
+    m_registry.registerTool(PatternEditor::listVariablesTool());
+    m_registry.registerTool(PatternEditor::setVariableTool());
+    m_registry.registerTool(PatternEditor::deleteVariableTool());
     m_registry.registerTool(PatternEditor::updateObjectTool());
     m_registry.registerTool(PatternEditor::deleteObjectTool());
     m_registry.registerTool(PatternEditor::fitViewTool());
