@@ -25,6 +25,11 @@
 
 #include "claude_shell_panel.h"
 
+#include <QEventLoop>
+#include <QTimer>
+#include <csignal>
+#include <sys/types.h>
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QEvent>
@@ -101,7 +106,28 @@ ClaudeShellPanel::ClaudeShellPanel(McpIntegration *mcp, QWidget *parent)
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-ClaudeShellPanel::~ClaudeShellPanel() = default;
+ClaudeShellPanel::~ClaudeShellPanel()
+{
+    // Stop the Claude CLI before the terminal is destroyed. Otherwise QTermWidget's process class finds it still
+    // running, prints "the terminal process is still running, trying to stop it by SIGHUP" and kills it itself.
+    if (!m_started)
+    {
+        return;
+    }
+    const int pid = m_terminal->getShellPID();
+    if (pid <= 0 || ::kill(pid, 0) != 0)
+    {
+        return;   // never started or already finished
+    }
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    connect(m_terminal, &QTermWidget::finished, &loop, &QEventLoop::quit);
+    connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    ::kill(pid, SIGHUP);
+    timeout.start(2000);
+    loop.exec();
+}
 
 //---------------------------------------------------------------------------------------------------------------------
 bool ClaudeShellPanel::eventFilter(QObject *watched, QEvent *event)

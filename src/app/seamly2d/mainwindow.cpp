@@ -6832,7 +6832,12 @@ void MainWindow::initializeMcp()
             shell->raise();
         }
     });
-    ui->help_Menu->insertAction(ui->aboutQt_Action, shellAction);
+    // View menu, right below "MCP Config and Log".
+    const QList<QAction *> viewActions = ui->view_Menu->actions();
+    const int panelIndex = viewActions.indexOf(mcpPanel->toggleViewAction());
+    QAction *beforeShell = (panelIndex >= 0 && panelIndex + 1 < viewActions.size()) ? viewActions.at(panelIndex + 1)
+                                                                                    : nullptr;
+    ui->view_Menu->insertAction(beforeShell, shellAction);
 #endif
 
     connect(m_mcp, &McpIntegration::stateChanged, this, [this]()

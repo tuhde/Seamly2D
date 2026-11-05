@@ -37,7 +37,7 @@ when more than one is open. Answers say which window they come from.
 
 ## The built-in Claude shell (Linux)
 
-**Help > Claude shell** opens a panel next to the Group Manager and Property Editor with a terminal that runs the
+**View > Claude shell** opens a panel next to the Group Manager and Property Editor with a terminal that runs the
 Claude Code CLI (`claude`) and connects it to this window. You type what you want, in your own words and language:
 
 > New pattern in cm, draft block Skirt. Draw a rectangle 50 x 60 cm and make a piece "Front" with 1 cm seam
@@ -98,7 +98,7 @@ Things worth knowing:
   start) and that nothing else uses the port; Seamly2D falls back to a free port and the status bar shows it.
 - **A tool call seems stuck:** a confirmation dialog may be waiting behind another window. Seamly2D answers a second
   tool call with "busy" until the dialog is closed.
-- **The Claude shell entry is missing from the Help menu:** the program was built without QTermWidget (see above).
+- **The Claude shell entry is missing from the View menu:** the program was built without QTermWidget (see above).
 
 ## For developers
 
