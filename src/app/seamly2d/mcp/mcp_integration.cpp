@@ -96,6 +96,15 @@ McpIntegration::McpIntegration(MainWindow *window)
         log(tr("Client connected: %1").arg(name));
         emit stateChanged();
     });
+    connect(m_hubServer, &McpServer::requestReceived, this, [this](const QString &)
+    {
+        m_lastRequest = QDateTime::currentDateTime();
+        if (!m_wasActive)
+        {
+            m_wasActive = true;
+            emit stateChanged();
+        }
+    });
     // Calls that another window (the hub) routed to this one.
     connect(m_server, &McpServer::toolCalled, this, [this](const QString &tool, bool isError)
     {
@@ -254,6 +263,18 @@ void McpIntegration::publishWindow()
 //---------------------------------------------------------------------------------------------------------------------
 void McpIntegration::tick()
 {
+    // "Connected" ends when the client stays quiet: the status must not stay on after the last Claude was closed.
+    const bool active = clientActive();
+    if (m_wasActive && !active)
+    {
+        m_wasActive = false;
+        log(tr("No request from %1 for %2 seconds. It is probably closed.").arg(m_clientName).arg(ActiveSeconds));
+        emit stateChanged();
+    }
+    else if (!active && m_lastRequest.isValid())
+    {
+        emit stateChanged();   // "last request ... ago" counts up
+    }
     adoptSavedToken();
     publishWindow();
     tryBecomeHub();
@@ -375,11 +396,36 @@ QString McpIntegration::statusText() const
     {
         return tr("Claude: via another window (port %1)").arg(port());
     }
-    if (!m_clientName.isEmpty())
+    if (clientActive())
     {
         return tr("Claude connected (%1)").arg(m_clientName);
     }
     return tr("Claude: listening on port %1").arg(port());
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+bool McpIntegration::clientActive() const
+{
+    return m_hubServer->isListening() && m_lastRequest.isValid() && m_lastRequest.secsTo(QDateTime::currentDateTime()) < ActiveSeconds;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QString McpIntegration::clientText() const
+{
+    if (!m_lastRequest.isValid())
+    {
+        return tr("no client yet");
+    }
+    const QString name = m_clientName.isEmpty() ? tr("a client") : m_clientName;
+    if (clientActive())
+    {
+        return tr("connected: %1").arg(name);
+    }
+    const qint64 seconds = m_lastRequest.secsTo(QDateTime::currentDateTime());
+    const QString ago = seconds < 120 ? tr("%1 s").arg(seconds)
+                      : seconds < 7200 ? tr("%1 min").arg(seconds / 60)
+                                       : tr("%1 h").arg(seconds / 3600);
+    return tr("idle, last request from %1 %2 ago").arg(name, ago);
 }
 
 //---------------------------------------------------------------------------------------------------------------------

@@ -486,6 +486,8 @@ QJsonValue McpServer::handleMessage(const QJsonObject &message)
         return QJsonValue();   // notification (e.g. notifications/initialized): nothing to answer
     }
 
+    emit requestReceived(method);
+
     const QJsonObject params = message.value(QStringLiteral("params")).toObject();
 
     if (method == QLatin1String("initialize"))

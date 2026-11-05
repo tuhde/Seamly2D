@@ -6848,6 +6848,16 @@ void MainWindow::initializeMcp()
     });
 
     m_mcp->startFromSettings();
+
+    // Test hook: open the panels at once (the tests and demos cannot click through the menus).
+    if (qEnvironmentVariableIsSet("SEAMLY_MCP_SHOW_PANELS"))
+    {
+        mcpPanel->show();
+#ifdef SEAMLY_HAVE_QTERMWIDGET
+        shell->show();
+        shell->raise();
+#endif
+    }
 }
 
 //---------------------------------------------------------------------------------------------------------------------

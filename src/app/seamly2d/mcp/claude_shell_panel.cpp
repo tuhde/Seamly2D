@@ -54,7 +54,8 @@
 ClaudeShellPanel::ClaudeShellPanel(McpIntegration *mcp, QWidget *parent)
     : QDockWidget(tr("Claude shell"), parent)
     , m_mcp(mcp)
-    , m_terminal(new QTermWidget(0, this))   // 0: do not start a shell yet
+    , m_layout(nullptr)
+    , m_terminal(nullptr)
     , m_message(new QLabel(this))
     , m_restart(new QPushButton(tr("Restart session"), this))
     , m_config()
@@ -65,13 +66,33 @@ ClaudeShellPanel::ClaudeShellPanel(McpIntegration *mcp, QWidget *parent)
     setObjectName(QStringLiteral("claude_shell_DockWidget"));
 
     QWidget *content = new QWidget(this);
-    QVBoxLayout *layout = new QVBoxLayout(content);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(2);
+    m_layout = new QVBoxLayout(content);
+    m_layout->setContentsMargins(0, 0, 0, 0);
+    m_layout->setSpacing(2);
 
     m_message->setWordWrap(true);
     m_message->setVisible(false);
     m_restart->setVisible(false);
+    m_layout->addWidget(m_message);
+    m_layout->addWidget(m_restart);
+    createTerminal();
+    setWidget(content);
+
+    connect(m_restart, &QPushButton::clicked, this, &ClaudeShellPanel::startSession);
+    // Start lazily: only when the panel is shown for the first time.
+    connect(this, &QDockWidget::visibilityChanged, this, [this](bool visible)
+    {
+        if (visible && !m_started)
+        {
+            startSession();
+        }
+    });
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void ClaudeShellPanel::createTerminal()
+{
+    m_terminal = new QTermWidget(0, this);   // 0: do not start a shell yet
     m_terminal->setScrollBarPosition(QTermWidget::ScrollBarRight);
     m_terminal->setFlowControlEnabled(false);
     applyColorScheme();
@@ -84,25 +105,14 @@ ClaudeShellPanel::ClaudeShellPanel(McpIntegration *mcp, QWidget *parent)
     {
         child->installEventFilter(this);
     }
+    m_layout->addWidget(m_terminal, 1);
+    connect(m_terminal, &QTermWidget::finished, this, &ClaudeShellPanel::sessionFinished);
+}
 
-    layout->addWidget(m_message);
-    layout->addWidget(m_restart);
-    layout->addWidget(m_terminal, 1);
-    setWidget(content);
-
-    connect(m_restart, &QPushButton::clicked, this, &ClaudeShellPanel::startSession);
-    connect(m_terminal, &QTermWidget::finished, this, [this]()
-    {
-        m_restart->setVisible(true);
-    });
-    // Start lazily: only when the panel is shown for the first time.
-    connect(this, &QDockWidget::visibilityChanged, this, [this](bool visible)
-    {
-        if (visible && !m_started)
-        {
-            startSession();
-        }
-    });
+//---------------------------------------------------------------------------------------------------------------------
+void ClaudeShellPanel::sessionFinished()
+{
+    m_restart->setVisible(true);
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -154,6 +164,10 @@ void ClaudeShellPanel::changeEvent(QEvent *event)
 //---------------------------------------------------------------------------------------------------------------------
 void ClaudeShellPanel::applyColorScheme()
 {
+    if (m_terminal == nullptr)
+    {
+        return;
+    }
     // Background and text come from the program's palette (the canvas look), so the shell matches the window in a
     // light or dark theme. The 16 ANSI colors are fixed sets that stay readable on a light or a dark background.
     const QPalette palette = qApp->palette();
@@ -262,6 +276,15 @@ void ClaudeShellPanel::startSession()
 
     showMessage(QString());
     m_restart->setVisible(false);
+    if (m_started)
+    {
+        // Restart: the old session is over (the button is only shown then). Start with a fresh terminal.
+        m_layout->removeWidget(m_terminal);
+        m_terminal->hide();
+        m_terminal->disconnect(this);
+        m_terminal->deleteLater();
+        createTerminal();
+    }
     m_started = true;
 
     // Run in a dedicated empty folder, not in the user's home or pattern folder: Claude Code asks once whether to

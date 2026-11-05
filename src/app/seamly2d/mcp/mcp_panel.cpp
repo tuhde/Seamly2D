@@ -187,6 +187,15 @@ void McpPanel::applyPort()
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+void McpPanel::setConfigText(const QString &text)
+{
+    if (m_config->toPlainText() != text)   // refresh runs often: keep the scroll position and selection
+    {
+        m_config->setPlainText(text);
+    }
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 void McpPanel::refresh()
 {
     {
@@ -198,26 +207,27 @@ void McpPanel::refresh()
     {
         if (m_mcp->isHub())
         {
-            m_status->setText(m_mcp->clientName().isEmpty()
-                                  ? tr("Listening on 127.0.0.1:%1. This window answers Claude.").arg(m_mcp->port())
-                                  : tr("Listening on 127.0.0.1:%1, connected: %2").arg(m_mcp->port()).arg(m_mcp->clientName()));
+            m_status->setText(tr("Listening on 127.0.0.1:%1, %2").arg(m_mcp->port()).arg(m_mcp->clientText()));
         }
         else
         {
             m_status->setText(tr("Port %1 is served by another Seamly2D window; this window is reached through it.")
                                   .arg(m_mcp->port()));
         }
-        m_config->setPlainText(m_mcp->mcpJsonSnippet());
+        setConfigText(m_mcp->mcpJsonSnippet());
     }
     else
     {
         m_status->setText(m_enabled->isChecked() && !m_mcp->lastError().isEmpty()
                               ? tr("Not running: %1").arg(m_mcp->lastError())
                               : tr("Off"));
-        m_config->setPlainText(tr("Turn the connection on to get the configuration."));
+        setConfigText(tr("Turn the connection on to get the configuration."));
     }
-    m_token->setText(m_mcp->token());
-    m_token->setCursorPosition(0);   // show the start of the token, not its end
+    if (m_token->text() != m_mcp->token())
+    {
+        m_token->setText(m_mcp->token());
+        m_token->setCursorPosition(0);   // show the start of the token, not its end
+    }
 
     QStringList lines;
     const QList<McpInstance> windows = m_mcp->windows();

@@ -26,6 +26,7 @@
 #ifndef MCP_INTEGRATION_H
 #define MCP_INTEGRATION_H
 
+#include <QDateTime>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -54,6 +55,9 @@ class McpIntegration : public QObject
 {
     Q_OBJECT
 public:
+    /// A client counts as connected for this long after its last request.
+    static constexpr int ActiveSeconds = 90;
+
     explicit McpIntegration(MainWindow *window);
     ~McpIntegration() override;
 
@@ -84,6 +88,10 @@ public:
     QString claudeCodeCommand() const;
     /// Short text for the status bar.
     QString statusText() const;
+    /// Whether a client sent a request lately. HTTP has no connection to watch, so this is how "connected" is told.
+    bool    clientActive() const;
+    /// Text for the panel: active client, or when the last one was seen.
+    QString clientText() const;
 
 signals:
     void stateChanged();
@@ -112,6 +120,8 @@ private:
     std::unique_ptr<McpRouter> m_router;
     QTimer           m_timer;
     QString          m_clientName;
+    QDateTime        m_lastRequest;      ///< last authenticated request on the public port
+    bool             m_wasActive = false;
     quint16          m_publicPort = 0;
     qint64           m_lastActivated = 0;
     bool             m_running = false;

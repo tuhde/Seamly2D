@@ -22,8 +22,10 @@ positions, formulas, screenshots), and that goes to whichever Claude client you 
 ## Switching it on
 
 1. **View > MCP Config and Log** (right below Toolbox), tick "Allow Claude to connect".
-2. The status bar now shows "Claude: listening on port 47800". When a client has connected it shows
-   "Claude connected (client name)".
+2. The status bar now shows "Claude: listening on port 47800". While a client keeps sending requests it shows
+   "Claude connected (client name)". HTTP has no connection to watch and clients do not say goodbye, so after
+   90 seconds without a request the status falls back to "idle, last request from ... ago" (an open but quiet Claude
+   session counts as idle, too).
 3. The panel offers the token and ready-made configuration for external clients (see below), the open windows, and a
    log with a time stamp for every tool call.
 
@@ -94,8 +96,8 @@ Things worth knowing:
 
 ## Troubleshooting
 
-- **"Claude connected" never appears:** check that the token in the client matches the dialog (it changes on every
-  start) and that nothing else uses the port; Seamly2D falls back to a free port and the status bar shows it.
+- **"Claude connected" never appears:** check that the token in the client matches the panel (it is saved; "New
+  token" replaces it) and that nothing else uses the port; Seamly2D falls back to a free port and the status bar shows it.
 - **A tool call seems stuck:** a confirmation dialog may be waiting behind another window. Seamly2D answers a second
   tool call with "busy" until the dialog is closed.
 - **The Claude shell entry is missing from the View menu:** the program was built without QTermWidget (see above).
@@ -114,4 +116,5 @@ Things worth knowing:
   `offscreen` platform cannot be used: the main window does not finish starting there.
 - Test hooks (environment variables, for automated runs only): `SEAMLY_MCP=1` starts the server regardless of the
   setting, `SEAMLY_MCP_PORT` and `SEAMLY_MCP_TOKEN` fix port and token, and `SEAMLY_MCP_ASSUME_YES=1` answers the
-  file-access confirmation dialogs with "yes". Never set the last one in normal use.
+  file-access confirmation dialogs with "yes". Never set the last one in normal use. `SEAMLY_MCP_SHOW_PANELS=1` opens the "MCP Config and Log" and
+  "Claude shell" panels at start (tests and demos cannot click through the menus).

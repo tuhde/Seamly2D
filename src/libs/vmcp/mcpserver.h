@@ -85,6 +85,9 @@ signals:
     void listeningChanged(bool listening);
     /// A client completed `initialize`.
     void clientInitialized(const QString &clientName, const QString &clientVersion);
+    /// An authenticated JSON-RPC request arrived (any method). Lets the UI tell whether a client is still active:
+    /// HTTP has no connection to watch, and clients do not say goodbye.
+    void requestReceived(const QString &method);
     /// A tool is about to run / has run (for status display and logging).
     void toolCalled(const QString &toolName, bool isError);
 

@@ -50,6 +50,7 @@ private slots:
     void appendLog(const QString &message);
     void enabledToggled(bool on);
     void applyPort();
+    void setConfigText(const QString &text);
 
 private:
     McpIntegration *m_mcp;

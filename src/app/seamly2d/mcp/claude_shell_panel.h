@@ -36,6 +36,7 @@ class QPushButton;
 class QTemporaryDir;
 class QTemporaryFile;
 class QTermWidget;
+class QVBoxLayout;
 
 /**
  * @brief The ClaudeShellPanel class is a dock panel with an embedded terminal running the Claude Code CLI.
@@ -57,15 +58,20 @@ protected:
 
 private slots:
     void startSession();
+    void sessionFinished();
 
 private:
     /// Path of the `claude` executable, or an empty string if it cannot be found.
     static QString findClaude();
     void showMessage(const QString &text);
+    /// Creates a fresh terminal widget (colors, key handling) and puts it into the layout. Every session gets its
+    /// own: a finished QTermWidget cannot be reliably started again.
+    void createTerminal();
     /// Pins the terminal colors to the program's palette (canvas background/text color, light or dark).
     void applyColorScheme();
 
     McpIntegration *m_mcp;
+    QVBoxLayout    *m_layout;
     QTermWidget    *m_terminal;
     QLabel         *m_message;
     QPushButton    *m_restart;
