@@ -72,6 +72,8 @@ public:
     bool registerTool(const McpTool &tool);
     bool contains(const QString &name) const;
     int  size() const;
+    /// All registered tools (used to wrap them, e.g. for routing between windows).
+    QVector<McpTool> tools() const { return m_tools; }
 
     /// The `tools` array for the `tools/list` response.
     QJsonArray toolList() const;

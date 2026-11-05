@@ -27,10 +27,14 @@
 
 #include <QCoreApplication>
 #include <QJsonDocument>
+#include <QDateTime>
+#include <QEvent>
+#include <QFileInfo>
 #include <QJsonObject>
 
 #include "../mainwindow.h"
 #include "pattern_editor.h"
+#include "../../libs/vmcp/mcprouter.h"
 #include "../../libs/vmcp/mcpserver.h"
 #include "../core/application_2d.h"
 #include "../../libs/vmisc/vsettings.h"
@@ -47,7 +51,10 @@ const char *const kInstructions =
     "check the result with list_objects. Points refer to earlier points by their id. A drawing becomes a pattern "
     "piece (what gets laid out and exported) with add_piece, which takes the outline's point ids in order; add the details a cutter needs with set_grainline, set_notch and update_piece (quantity, fold, label texts). Call "
     "fit_view after drawing, use screenshot to look at the result yourself, and show_mode to switch between the draft and piece view, so that the user sees the "
-    "result. Save the work with save_pattern and write printable/cuttable files with export_layout; Seamly2D asks the user to confirm writing to a file or folder.";
+    "result. Save the work with save_pattern and write printable/cuttable files with export_layout; Seamly2D asks the user to confirm writing to a file or folder.\n"
+    "Several Seamly2D windows can be open, each with its own pattern. list_patterns shows them; every tool accepts an "
+    "optional `pattern` (id, file name or title) to choose the window. Without it the window the user used last is "
+    "taken, so name the pattern when more than one is open.";
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -55,35 +62,85 @@ McpIntegration::McpIntegration(MainWindow *window)
     : QObject(window)
     , m_window(window)
     , m_server(new McpServer(&m_registry, this))
+    , m_hubServer(new McpServer(&m_hubRegistry, this))
 {
-    m_server->setServerInfo(QStringLiteral("seamly2d"), QStringLiteral("Seamly2D"),
-                            QCoreApplication::applicationVersion());
-    m_server->setInstructions(QString::fromUtf8(kInstructions));
+    for (McpServer *server : {m_server, m_hubServer})
+    {
+        server->setServerInfo(QStringLiteral("seamly2d"), QStringLiteral("Seamly2D"),
+                              QCoreApplication::applicationVersion());
+        server->setInstructions(QString::fromUtf8(kInstructions));
+    }
     registerTools();
 
+    m_router.reset(new McpRouter(&m_registry, &m_instances, [this]() { return token(); }));
+    m_router->setLogger([this](const QString &tool, const McpInstance &target, bool isError, bool local)
+    {
+        const QString result = isError ? tr("error") : tr("ok");
+        if (local)
+        {
+            log(QStringLiteral("%1: %2").arg(tool, result));
+        }
+        else
+        {
+            const QString name = target.patternFile.isEmpty() ? target.title : QFileInfo(target.patternFile).fileName();
+            log(tr("%1 -> window %2 (%3): %4").arg(tool).arg(target.pid).arg(name, result));
+        }
+    });
+    m_router->populate(&m_hubRegistry);
+
     connect(m_server, &McpServer::listeningChanged, this, [this](bool) { emit stateChanged(); });
-    connect(m_server, &McpServer::clientInitialized, this, [this](const QString &name, const QString &)
+    connect(m_hubServer, &McpServer::listeningChanged, this, [this](bool) { emit stateChanged(); });
+    connect(m_hubServer, &McpServer::clientInitialized, this, [this](const QString &name, const QString &)
     {
         m_clientName = name;
+        log(tr("Client connected: %1").arg(name));
         emit stateChanged();
     });
+    // Calls that another window (the hub) routed to this one.
+    connect(m_server, &McpServer::toolCalled, this, [this](const QString &tool, bool isError)
+    {
+        log(QStringLiteral("%1: %2").arg(tool, isError ? tr("error") : tr("ok")));
+    });
+
+    m_timer.setInterval(2000);
+    connect(&m_timer, &QTimer::timeout, this, &McpIntegration::tick);
+    window->installEventFilter(this);
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-McpIntegration::~McpIntegration() = default;
+McpIntegration::~McpIntegration()
+{
+    m_instances.remove();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+bool McpIntegration::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_window && event->type() == QEvent::WindowActivate)
+    {
+        m_lastActivated = QDateTime::currentMSecsSinceEpoch();
+        if (m_running)
+        {
+            publishWindow();
+        }
+    }
+    return QObject::eventFilter(watched, event);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void McpIntegration::log(const QString &message)
+{
+    emit logMessage(message);
+}
 
 //---------------------------------------------------------------------------------------------------------------------
 void McpIntegration::startFromSettings()
 {
-    // SEAMLY_MCP* are test hooks (integration tests / CI); users use Help > Claude connection.
+    // SEAMLY_MCP* are test hooks (integration tests / CI); users use the "MCP Config and Log" panel.
     const bool forced = qEnvironmentVariableIsSet("SEAMLY_MCP");
     if (!forced && !qApp->Seamly2DSettings()->GetMcpEnabled())
     {
         return;
-    }
-    if (qEnvironmentVariableIsSet("SEAMLY_MCP_TOKEN"))
-    {
-        m_server->setToken(qEnvironmentVariable("SEAMLY_MCP_TOKEN"));
     }
     quint16 port = qApp->Seamly2DSettings()->GetMcpPort();
     if (qEnvironmentVariableIsSet("SEAMLY_MCP_PORT"))
@@ -94,40 +151,158 @@ void McpIntegration::startFromSettings()
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+void McpIntegration::ensureToken()
+{
+    QString token;
+    if (qEnvironmentVariableIsSet("SEAMLY_MCP_TOKEN"))
+    {
+        m_tokenFromEnvironment = true;   // test hook: neither saved nor replaced
+        token = qEnvironmentVariable("SEAMLY_MCP_TOKEN");
+    }
+    else
+    {
+        VSettings *settings = qApp->Seamly2DSettings();
+        settings->sync();
+        token = settings->GetMcpToken();
+        if (token.isEmpty())
+        {
+            token = m_server->regenerateToken();
+            settings->SetMcpToken(token);   // kept, so that the client configuration stays valid
+        }
+    }
+    m_server->setToken(token);
+    m_hubServer->setToken(token);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void McpIntegration::adoptSavedToken()
+{
+    if (m_tokenFromEnvironment)
+    {
+        return;
+    }
+    VSettings *settings = qApp->Seamly2DSettings();
+    settings->sync();   // another window may have created a new token
+    const QString saved = settings->GetMcpToken();
+    if (!saved.isEmpty() && saved != token())
+    {
+        m_server->setToken(saved);
+        m_hubServer->setToken(saved);
+        log(tr("The token was changed in another window."));
+        emit stateChanged();
+    }
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 bool McpIntegration::start(quint16 port)
 {
-    if (m_server->start(port))
+    m_publicPort = port;
+    ensureToken();
+    if (!m_server->isListening() && !m_server->start(0))
     {
-        return true;
+        log(tr("Could not start: %1").arg(m_server->errorString()));
+        return false;
     }
-    // The preferred port is taken (e.g. a second Seamly2D window): fall back to any free port.
-    return port != 0 && m_server->start(0);
+    m_running = true;
+    if (m_lastActivated == 0)
+    {
+        m_lastActivated = QDateTime::currentMSecsSinceEpoch();
+    }
+    publishWindow();
+    tryBecomeHub();
+    m_timer.start();
+    emit stateChanged();
+    return true;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void McpIntegration::tryBecomeHub()
+{
+    if (!m_running || m_hubServer->isListening())
+    {
+        return;
+    }
+    if (m_hubServer->start(m_publicPort))
+    {
+        m_loggedPortBusy = false;
+        log(tr("Listening on 127.0.0.1:%1. This window answers Claude and passes calls on to the other windows.")
+                .arg(m_hubServer->port()));
+        publishWindow();
+    }
+    else if (!m_loggedPortBusy)
+    {
+        m_loggedPortBusy = true;
+        log(tr("Port %1 is in use. Another Seamly2D window answers Claude; this window is reached through it. "
+               "If no other window is open, another program uses the port.").arg(m_publicPort));
+        emit stateChanged();
+    }
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void McpIntegration::publishWindow()
+{
+    const QJsonObject info = m_window->mcpPatternInfo();
+    McpInstance self;
+    self.port = m_server->port();
+    self.patternFile = info.value(QStringLiteral("file")).toString();
+    self.modified = info.value(QStringLiteral("modified")).toBool();
+    self.title = m_window->windowTitle().remove(QStringLiteral("[*]")).trimmed();
+    self.lastActivated = m_lastActivated;
+    m_instances.publish(self);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void McpIntegration::tick()
+{
+    adoptSavedToken();
+    publishWindow();
+    tryBecomeHub();
+
+    const QList<McpInstance> now = m_instances.instances();
+    if (now != m_knownWindows)
+    {
+        m_knownWindows = now;
+        emit stateChanged();
+    }
 }
 
 //---------------------------------------------------------------------------------------------------------------------
 void McpIntegration::stop()
 {
+    m_timer.stop();
+    m_running = false;
+    m_hubServer->stop();
     m_server->stop();
+    m_instances.remove();
+    m_knownWindows.clear();
     m_clientName.clear();
+    m_loggedPortBusy = false;
+    log(tr("Stopped."));
     emit stateChanged();
 }
 
 //---------------------------------------------------------------------------------------------------------------------
 bool McpIntegration::isRunning() const
 {
-    return m_server->isListening();
+    return m_running && m_server->isListening();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+bool McpIntegration::isHub() const
+{
+    return m_hubServer->isListening();
 }
 
 //---------------------------------------------------------------------------------------------------------------------
 quint16 McpIntegration::port() const
 {
-    return m_server->port();
+    return m_hubServer->isListening() ? m_hubServer->port() : m_publicPort;
 }
 
 //---------------------------------------------------------------------------------------------------------------------
 QString McpIntegration::token() const
 {
-    return m_server->token();
+    return m_hubServer->token();
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -135,6 +310,13 @@ QString McpIntegration::regenerateToken()
 {
     m_clientName.clear();
     const QString token = m_server->regenerateToken();
+    m_hubServer->setToken(token);
+    if (!m_tokenFromEnvironment)
+    {
+        qApp->Seamly2DSettings()->SetMcpToken(token);
+        qApp->Seamly2DSettings()->sync();
+    }
+    log(tr("New token created. Update the configuration of your Claude client."));
     emit stateChanged();
     return token;
 }
@@ -142,13 +324,25 @@ QString McpIntegration::regenerateToken()
 //---------------------------------------------------------------------------------------------------------------------
 QString McpIntegration::lastError() const
 {
-    return m_server->errorString();
+    return m_hubServer->isListening() ? m_server->errorString() : m_hubServer->errorString();
 }
 
 //---------------------------------------------------------------------------------------------------------------------
 QString McpIntegration::clientName() const
 {
     return m_clientName;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QList<McpInstance> McpIntegration::windows() const
+{
+    return m_instances.instances();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+qint64 McpIntegration::windowId() const
+{
+    return m_instances.pid();
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -176,6 +370,10 @@ QString McpIntegration::statusText() const
     if (!isRunning())
     {
         return QString();
+    }
+    if (!isHub())
+    {
+        return tr("Claude: via another window (port %1)").arg(port());
     }
     if (!m_clientName.isEmpty())
     {
@@ -239,5 +437,7 @@ void McpIntegration::registerTools()
 McpToolResult McpIntegration::getPatternInfo(const QJsonObject &arguments)
 {
     Q_UNUSED(arguments)
-    return McpToolResult::ok(QStringLiteral("Pattern info:"), m_window->mcpPatternInfo());
+    QJsonObject info = m_window->mcpPatternInfo();
+    info.insert(QStringLiteral("windowId"), static_cast<double>(m_instances.pid()));   // for the `pattern` argument
+    return McpToolResult::ok(QStringLiteral("Pattern info:"), info);
 }

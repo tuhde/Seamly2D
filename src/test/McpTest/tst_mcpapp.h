@@ -62,9 +62,13 @@ private slots:
     void measurementValuesCanBeChanged();
     void measurementFileCanBeCreatedAndAttached();
     void multisizeTableFollowsSizeAndHeight();
+    void severalWindowsShareOnePort();   ///< last: it stops the first window
 
 private:
     bool        startApp();
+    /// Starts a second window (own settings) that shares the port, token and instance directory of the first.
+    bool        startPeer();
+    void        stopPeer();
     void        stopApp();
     QJsonObject tool(const QString &name, const QJsonObject &arguments = QJsonObject());
     /// Calls a tool that must succeed and returns its structured result.
@@ -77,6 +81,8 @@ private:
 
     QTemporaryDir               m_dataDir;      ///< SEAMLY_DATA_DIR: settings and logs of the test instance
     QTemporaryDir               m_workDir;      ///< files written by the tests
+    QTemporaryDir               m_peerDataDir;  ///< settings and logs of the second window
+    std::unique_ptr<QProcess>   m_peer;
     std::unique_ptr<QProcess>   m_app;
     quint16                     m_port = 0;
     QString                     m_token = QStringLiteral("integration-test-token");

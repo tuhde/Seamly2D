@@ -4,12 +4,12 @@
 HEADERS += \
     $$PWD/mcp_integration.h \
     $$PWD/pattern_editor.h \
-    $$PWD/dialog_claude_connection.h
+    $$PWD/mcp_panel.h
 
 SOURCES += \
     $$PWD/mcp_integration.cpp \
     $$PWD/pattern_editor.cpp \
-    $$PWD/dialog_claude_connection.cpp
+    $$PWD/mcp_panel.cpp
 
 # The embedded "Claude shell" terminal panel needs QTermWidget (Qt 6). It is optional: without it the panel is
 # simply not built. Install e.g. libqtermwidget-dev (Debian/Ubuntu) and re-run qmake.

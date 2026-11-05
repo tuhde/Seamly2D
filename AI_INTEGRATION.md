@@ -10,10 +10,10 @@ positions, formulas, screenshots), and that goes to whichever Claude client you 
 
 ## Safety model
 
-- **Off by default.** Nothing listens until you switch it on in **Help > Claude connection...**.
+- **Off by default.** Nothing listens until you switch it on in **View > MCP Config and Log**.
 - **Local only.** The server listens on `127.0.0.1` and refuses requests that carry a foreign `Host` or `Origin`
   header (protection against web pages talking to it).
-- **Token.** Every request needs a random token that changes each time Seamly2D starts. Copy it from the dialog.
+- **Token.** Every request needs a random token. It is created once and saved in your Seamly2D settings (in plain text, which is acceptable because the server only listens on this computer), so your Claude client stays configured. **New token** in the panel replaces it; then configure your client again.
 - **File access needs your OK.** Saving, opening, exporting and changing a measurement value ask you in a dialog the
   first time Claude touches a file or folder in a session (default answer: No; you can allow it for the rest of the session). Declining makes
   the tool fail and writes nothing.
@@ -21,10 +21,19 @@ positions, formulas, screenshots), and that goes to whichever Claude client you 
 
 ## Switching it on
 
-1. **Help > Claude connection...**, tick "Allow Claude to connect to this window".
-2. The status bar now shows "Claude: listening on port 47800" (another port if that one is taken). When a client has
-   connected it shows "Claude connected (client name)".
-3. The dialog offers the token and ready-made configuration for external clients (see below).
+1. **View > MCP Config and Log** (right below Toolbox), tick "Allow Claude to connect".
+2. The status bar now shows "Claude: listening on port 47800". When a client has connected it shows
+   "Claude connected (client name)".
+3. The panel offers the token and ready-made configuration for external clients (see below), the open windows, and a
+   log with a time stamp for every tool call.
+
+### Several windows
+
+Each pattern window is its own program instance, but Claude is configured once with one URL and one token. The window
+that gets the configured port answers Claude and passes every call on to the window it is meant for; when that window
+closes, another one takes the port over (within a few seconds). Claude sees `list_patterns` and an optional `pattern`
+argument (id, file name or title) on every tool. Without it, the window you used last is taken, so name the pattern
+when more than one is open. Answers say which window they come from.
 
 ## The built-in Claude shell (Linux)
 

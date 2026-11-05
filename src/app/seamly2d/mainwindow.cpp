@@ -95,7 +95,7 @@
 #include "../vtools/tools/nodeDetails/anchorpoint_tool.h"
 #include "../vtools/tools/nodeDetails/internal_path_tool.h"
 #include "../vtools/undocommands/addgroup.h"
-#include "mcp/dialog_claude_connection.h"
+#include "mcp/mcp_panel.h"
 #include "dialogs/layoutsettings_dialog.h"
 #include "mcp/mcp_integration.h"
 #ifdef SEAMLY_HAVE_QTERMWIDGET
@@ -312,6 +312,10 @@ MainWindow::MainWindow(QWidget *parent)
         initializeAutoSave();                       // Initialize pattern auto-save functionality.
         ui->draft_ToolBox->setCurrentIndex(0);      // Set the current index for the draft toolbox.
 
+        // Optional connection to Claude (off unless the user enables it). Before ReadSettings(), so that the
+        // layout of its dock is restored with the others.
+        initializeMcp();
+
         // Read application settings and initialize toolbar visibility.
         ReadSettings();
         initializeToolBarVisibility();
@@ -324,8 +328,6 @@ MainWindow::MainWindow(QWidget *parent)
 
         // Handle changes made to a measurment file.
         connect(m_watcher, &QFileSystemWatcher::fileChanged, this, &MainWindow::measurementsChanged);
-
-        initializeMcp(); // Optional connection to Claude (off unless the user enables it).
 
         connect(qApp, &QApplication::focusChanged, this, [this](QWidget *old, QWidget *now)
         {
@@ -6793,14 +6795,19 @@ void MainWindow::initializeMcp()
     m_mcpStatus->setVisible(false);
     ui->statusBar->addPermanentWidget(m_mcpStatus);
 
-    QAction *action = new QAction(tr("Claude connection..."), this);
-    action->setMenuRole(QAction::NoRole);
-    ui->help_Menu->insertAction(ui->aboutQt_Action, action);
-    connect(action, &QAction::triggered, this, [this]()
+    // "MCP Config and Log" dock, listed in the View menu right below "Toolbox".
+    McpPanel *mcpPanel = new McpPanel(m_mcp, this);
+    addDockWidget(Qt::RightDockWidgetArea, mcpPanel);
+    tabifyDockWidget(ui->toolProperties_DockWidget, mcpPanel);
+    resizeDocks({mcpPanel}, {420}, Qt::Horizontal);
+    mcpPanel->hide();
     {
-        DialogClaudeConnection dialog(m_mcp, this);
-        dialog.exec();
-    });
+        QAction *panelAction = mcpPanel->toggleViewAction();
+        const QList<QAction *> viewActions = ui->view_Menu->actions();
+        const int toolbox = viewActions.indexOf(actionDockWidgetToolbox);
+        QAction *before = (toolbox >= 0 && toolbox + 1 < viewActions.size()) ? viewActions.at(toolbox + 1) : nullptr;
+        ui->view_Menu->insertAction(before, panelAction);
+    }
 
 #ifdef SEAMLY_HAVE_QTERMWIDGET
     // Dockable terminal that runs the Claude Code CLI against this window's MCP server (starts when first shown).

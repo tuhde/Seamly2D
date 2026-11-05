@@ -1,7 +1,7 @@
 /***************************************************************************
- **  @file   dialog_claude_connection.h
+ **  @file   mcp_panel.h
  **
- **  @brief  Dialog to switch the Claude (MCP) connection on and off and to copy its configuration.
+ **  @brief  Dock panel with the MCP configuration and a log of what Claude does.
  **  @copyright
  **  This source code is part of the Seamly2D project, a pattern making
  **  program to create and model patterns of clothing.
@@ -23,10 +23,10 @@
  **
  **************************************************************************/
 
-#ifndef DIALOG_CLAUDE_CONNECTION_H
-#define DIALOG_CLAUDE_CONNECTION_H
+#ifndef MCP_PANEL_H
+#define MCP_PANEL_H
 
-#include <QDialog>
+#include <QDockWidget>
 
 class McpIntegration;
 class QCheckBox;
@@ -35,24 +35,31 @@ class QLineEdit;
 class QPlainTextEdit;
 class QSpinBox;
 
-class DialogClaudeConnection : public QDialog
+/**
+ * @brief The McpPanel class is the "MCP Config and Log" dock: switch the connection on and off, copy the token and
+ * the client configuration, see the open windows and a log of the tool calls.
+ */
+class McpPanel : public QDockWidget
 {
     Q_OBJECT
 public:
-    DialogClaudeConnection(McpIntegration *mcp, QWidget *parent = nullptr);
+    explicit McpPanel(McpIntegration *mcp, QWidget *parent = nullptr);
 
 private slots:
-    void apply();
     void refresh();
+    void appendLog(const QString &message);
+    void enabledToggled(bool on);
+    void applyPort();
 
 private:
     McpIntegration *m_mcp;
     QCheckBox      *m_enabled;
     QSpinBox       *m_port;
-    int             m_shownPort;   ///< port the field showed when the dialog opened
     QLabel         *m_status;
+    QLabel         *m_windows;
     QLineEdit      *m_token;
     QPlainTextEdit *m_config;
+    QPlainTextEdit *m_log;
 };
 
-#endif // DIALOG_CLAUDE_CONNECTION_H
+#endif // MCP_PANEL_H

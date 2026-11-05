@@ -80,6 +80,7 @@ const QString settingPatternGraphicalOutput = QStringLiteral("pattern/graphicalO
 
 const QString settingMcpEnabled = QStringLiteral("mcp/enabled");
 const QString settingMcpPort    = QStringLiteral("mcp/port");
+const QString settingMcpToken   = QStringLiteral("mcp/token");
 
 const QString settingCommunityServer       = QStringLiteral("community/server");
 const QString settingCommunityServerSecure = QStringLiteral("community/serverSecure");
@@ -206,6 +207,18 @@ quint16 VSettings::GetMcpPort() const
 void VSettings::SetMcpPort(const quint16 &value)
 {
     setValue(settingMcpPort, value);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QString VSettings::GetMcpToken() const
+{
+    return value(settingMcpToken, QString()).toString();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void VSettings::SetMcpToken(const QString &value)
+{
+    setValue(settingMcpToken, value);
 }
 
 //---------------------------------------------------------------------------------------------------------------------

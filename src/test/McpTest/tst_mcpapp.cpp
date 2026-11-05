@@ -90,6 +90,7 @@ bool TST_McpApp::startApp()
     environment.insert(QStringLiteral("SEAMLY_MCP"), QStringLiteral("1"));
     environment.insert(QStringLiteral("SEAMLY_MCP_PORT"), QString::number(m_port));
     environment.insert(QStringLiteral("SEAMLY_MCP_TOKEN"), m_token);
+    environment.insert(QStringLiteral("SEAMLY_MCP_INSTANCE_DIR"), m_workDir.path() + QLatin1String("/instances"));
     environment.insert(QStringLiteral("SEAMLY_MCP_ASSUME_YES"), QStringLiteral("1"));   // no dialogs to click
     environment.insert(QStringLiteral("LANG"), QStringLiteral("C"));
     environment.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
@@ -119,6 +120,50 @@ bool TST_McpApp::startApp()
         QTest::qWait(200);
     }
     return false;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+bool TST_McpApp::startPeer()
+{
+    const QString settingsDir = m_peerDataDir.path() + QLatin1String("/settings/Seamly2DTeam");
+    QDir().mkpath(settingsDir);
+    QDir().mkpath(m_peerDataDir.path() + QLatin1String("/logs/seamly2d"));
+    {
+        QSettings settings(settingsDir + QLatin1String("/qt6_seamly2d.ini"), QSettings::IniFormat);
+        settings.setValue(QStringLiteral("configuration/showWelcome"), true);
+        settings.sync();
+    }
+
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("SEAMLY_DATA_DIR"), m_peerDataDir.path());
+    environment.insert(QStringLiteral("SEAMLY_MCP"), QStringLiteral("1"));
+    environment.insert(QStringLiteral("SEAMLY_MCP_PORT"), QString::number(m_port));   // taken by the first window
+    environment.insert(QStringLiteral("SEAMLY_MCP_TOKEN"), m_token);
+    environment.insert(QStringLiteral("SEAMLY_MCP_INSTANCE_DIR"), m_workDir.path() + QLatin1String("/instances"));
+    environment.insert(QStringLiteral("SEAMLY_MCP_ASSUME_YES"), QStringLiteral("1"));
+    environment.insert(QStringLiteral("LANG"), QStringLiteral("C"));
+    environment.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
+
+    m_peer.reset(new QProcess());
+    m_peer->setProcessEnvironment(environment);
+    m_peer->setWorkingDirectory(m_workDir.path());
+    m_peer->start(appBinary(), QStringList());
+    return m_peer->waitForStarted(20000);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::stopPeer()
+{
+    if (m_peer && m_peer->state() != QProcess::NotRunning)
+    {
+        m_peer->terminate();
+        if (!m_peer->waitForFinished(5000))
+        {
+            m_peer->kill();
+            m_peer->waitForFinished(5000);
+        }
+    }
+    m_peer.reset();
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -160,6 +205,7 @@ void TST_McpApp::initTestCase()
 //---------------------------------------------------------------------------------------------------------------------
 void TST_McpApp::cleanupTestCase()
 {
+    stopPeer();
     stopApp();
 }
 
@@ -1325,3 +1371,74 @@ void TST_McpApp::multisizeTableFollowsSizeAndHeight()
     QVERIFY(qAbs(value(QStringLiteral("armscye_width")) - before) < 0.001);
 }
 
+
+//---------------------------------------------------------------------------------------------------------------------
+void TST_McpApp::severalWindowsShareOnePort()
+{
+    // Reads the open windows from list_patterns (the array is part of the text, not of structuredContent).
+    const auto windows = [this]() -> QJsonArray
+    {
+        const QJsonObject result = tool(QStringLiteral("list_patterns"));
+        const QString text = result.value(QStringLiteral("content")).toArray().at(0).toObject()
+                                 .value(QStringLiteral("text")).toString();
+        return QJsonDocument::fromJson(text.mid(text.indexOf(QLatin1Char('['))).toUtf8()).array();
+    };
+
+    QVERIFY2(startPeer(), "The second window did not start.");
+    QJsonArray open;
+    for (int i = 0; i < 100 && open.size() < 2; ++i)
+    {
+        open = windows();
+        if (open.size() < 2)
+        {
+            QTest::qWait(200);
+        }
+    }
+    QCOMPARE(open.size(), 2);
+
+    qint64 hubId = 0;
+    qint64 peerId = 0;
+    for (const QJsonValue &value : open)
+    {
+        const QJsonObject entry = value.toObject();
+        (entry.value(QStringLiteral("hub")).toBool() ? hubId : peerId) = static_cast<qint64>(entry.value(QStringLiteral("id")).toDouble());
+    }
+    QVERIFY(hubId != 0 && peerId != 0 && hubId != peerId);
+
+    // A call for the second window is carried out there and does not touch the first one.
+    const QString hubBlock = ok(QStringLiteral("get_pattern_info"),
+                                obj({{QStringLiteral("pattern"), QString::number(hubId)}}))
+                                 .value(QStringLiteral("activeDraftBlock")).toString();
+    QVERIFY(!hubBlock.isEmpty());
+    ok(QStringLiteral("add_draft_block"), obj({{QStringLiteral("pattern"), QString::number(peerId)},
+                                               {QStringLiteral("name"), QStringLiteral("Peer")},
+                                               {QStringLiteral("unit"), QStringLiteral("mm")}}));
+    const QJsonObject peerInfo = ok(QStringLiteral("get_pattern_info"),
+                                    obj({{QStringLiteral("pattern"), QString::number(peerId)}}));
+    QCOMPARE(static_cast<qint64>(peerInfo.value(QStringLiteral("windowId")).toDouble()), peerId);
+    QCOMPARE(peerInfo.value(QStringLiteral("activeDraftBlock")).toString(), QStringLiteral("Peer"));
+    const QJsonObject hubInfo = ok(QStringLiteral("get_pattern_info"),
+                                   obj({{QStringLiteral("pattern"), QString::number(hubId)}}));
+    QCOMPARE(static_cast<qint64>(hubInfo.value(QStringLiteral("windowId")).toDouble()), hubId);
+    QCOMPARE(hubInfo.value(QStringLiteral("activeDraftBlock")).toString(), hubBlock);
+
+    QVERIFY(fails(QStringLiteral("get_pattern_info"), obj({{QStringLiteral("pattern"), QStringLiteral("nope.sm2d")}}))
+                .contains(QStringLiteral("list_patterns")));
+
+    // The first window closes: the second one takes the public port over, with the same token.
+    stopApp();
+    bool takenOver = false;
+    for (int i = 0; i < 100 && !takenOver; ++i)
+    {
+        const QJsonObject result = tool(QStringLiteral("get_pattern_info"));
+        takenOver = !result.isEmpty() && !result.value(QStringLiteral("isError")).toBool();
+        if (!takenOver)
+        {
+            QTest::qWait(200);
+        }
+    }
+    QVERIFY2(takenOver, "The second window did not take the public port over.");
+    QCOMPARE(ok(QStringLiteral("get_pattern_info")).value(QStringLiteral("activeDraftBlock")).toString(),
+             QStringLiteral("Peer"));
+    stopPeer();
+}

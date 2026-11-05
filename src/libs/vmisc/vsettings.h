@@ -94,6 +94,9 @@ public:
 
     quint16        GetMcpPort() const;
     void           SetMcpPort(const quint16 &value);
+    /// Token the MCP clients authenticate with; kept so that the client configuration stays valid.
+    QString        GetMcpToken() const;
+    void           SetMcpToken(const QString &value);
     static quint16 GetDefMcpPort();
 
     QString        GetServer() const;
