@@ -59,6 +59,7 @@ struct McpTool
     QString        description;
     QJsonObject    inputSchema;   ///< JSON Schema (type "object").
     bool           readOnly = false;
+    bool           destructive = false;   ///< deletes content or overwrites/replaces a file or the open pattern
     McpToolHandler handler;
 };
 

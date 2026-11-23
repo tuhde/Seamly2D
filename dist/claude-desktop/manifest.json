@@ -1,0 +1,42 @@
+{
+  "manifest_version": "0.2",
+  "name": "seamly2d",
+  "display_name": "Seamly2D",
+  "version": "1.0.0",
+  "description": "Lets Claude draw and edit patterns in your running Seamly2D.",
+  "long_description": "Connects Claude Desktop to the Seamly2D program on this computer. In Seamly2D turn on the Claude connection (View > MCP panel) and copy the token from there into this extension's settings. Seamly2D has to be running.",
+  "author": { "name": "Seamly2D project", "url": "https://github.com/fashionfreedom/seamly2d" },
+  "license": "GPL-3.0-or-later",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "SEAMLY2D_MCP_PORT": "${user_config.port}",
+        "SEAMLY2D_MCP_TOKEN": "${user_config.token}"
+      }
+    }
+  },
+  "user_config": {
+    "port": {
+      "type": "number",
+      "title": "Port",
+      "description": "Port shown in the MCP panel of Seamly2D (default 47800).",
+      "default": 47800,
+      "required": true,
+      "min": 1,
+      "max": 65535
+    },
+    "token": {
+      "type": "string",
+      "title": "Token",
+      "description": "Access token from the MCP panel of Seamly2D.",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "compatibility": { "platforms": ["darwin", "win32", "linux"] }
+}

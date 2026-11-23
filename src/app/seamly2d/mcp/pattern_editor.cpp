@@ -4496,6 +4496,7 @@ McpTool PatternEditor::deleteObjectTool()
 {
     McpTool tool;
     tool.name = QStringLiteral("delete_object");
+    tool.destructive = true;
     tool.description =
         QStringLiteral("Deletes one object (a point or a line) of the active draft block. One Undo step. Refused, "
                        "with the names of the dependents, if other objects still use it (delete or change those "
@@ -4609,6 +4610,7 @@ McpTool PatternEditor::deleteVariableTool()
 {
     McpTool tool;
     tool.name = QStringLiteral("delete_variable");
+    tool.destructive = true;
     tool.description =
         QStringLiteral("Deletes a custom variable. One Undo step. Refused, naming the places, while a formula of "
                        "a point, line or another variable still uses it.");
@@ -4805,6 +4807,7 @@ McpTool PatternEditor::deletePieceTool()
 {
     McpTool tool;
     tool.name = QStringLiteral("delete_piece");
+    tool.destructive = true;
     tool.description = QStringLiteral("Deletes a pattern piece (not the drawing it was made from). One Undo step.");
     tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                                    {QStringLiteral("properties"),
@@ -4840,6 +4843,7 @@ McpTool PatternEditor::savePatternTool()
 {
     McpTool tool;
     tool.name = QStringLiteral("save_pattern");
+    tool.destructive = true;
     tool.description =
         QStringLiteral("Saves the pattern to a .sm2d file. Without 'path' it saves to the file the pattern was opened "
                        "from or saved to before. The first time in a session that a file is written, Seamly2D asks "
@@ -4861,6 +4865,7 @@ McpTool PatternEditor::openPatternTool()
 {
     McpTool tool;
     tool.name = QStringLiteral("open_pattern");
+    tool.destructive = true;
     tool.description =
         QStringLiteral("Opens an existing pattern file (.sm2d) into this window. Only works while the window is "
                        "empty (no pattern, no unsaved changes): otherwise Seamly2D would open another window that "
@@ -4884,6 +4889,7 @@ McpTool PatternEditor::exportLayoutTool()
 {
     McpTool tool;
     tool.name = QStringLiteral("export_layout");
+    tool.destructive = true;
     tool.description =
         QStringLiteral("Exports the pattern pieces to files. mode \"layout\" (default) arranges all pieces on pages "
                        "of the chosen paper, as for printing or cutting; mode \"pieces\" exports every piece on "

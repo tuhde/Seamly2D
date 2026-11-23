@@ -185,6 +185,12 @@ void TST_McpServer::toolsListDescribesTheTools()
         {
             QVERIFY(t.value(QStringLiteral("annotations")).toObject().value(QStringLiteral("readOnlyHint")).toBool());
         }
+        const QJsonObject annotations = t.value(QStringLiteral("annotations")).toObject();
+        QVERIFY(annotations.contains(QStringLiteral("openWorldHint")));
+        QVERIFY(!annotations.value(QStringLiteral("openWorldHint")).toBool());
+        // destructiveHint only means something for tools that change things
+        QCOMPARE(annotations.contains(QStringLiteral("destructiveHint")),
+                 !annotations.value(QStringLiteral("readOnlyHint")).toBool());
     }
     names.sort();
     QCOMPARE(names, (QStringList{QStringLiteral("echo"), QStringLiteral("fail"), QStringLiteral("image"),

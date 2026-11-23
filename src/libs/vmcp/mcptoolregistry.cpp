@@ -100,8 +100,16 @@ QJsonArray McpToolRegistry::toolList() const
         entry.insert(QStringLiteral("name"), tool.name);
         entry.insert(QStringLiteral("description"), tool.description);
         entry.insert(QStringLiteral("inputSchema"), schema);
-        entry.insert(QStringLiteral("annotations"),
-                     QJsonObject{{QStringLiteral("readOnlyHint"), tool.readOnly}});
+        // Clients sort tools by these hints and may ask for permission accordingly. Everything works on the
+        // local application only (openWorldHint false); edits can be undone, so only tools flagged destructive
+        // are reported as such.
+        QJsonObject annotations{{QStringLiteral("readOnlyHint"), tool.readOnly},
+                                {QStringLiteral("openWorldHint"), false}};
+        if (!tool.readOnly)
+        {
+            annotations.insert(QStringLiteral("destructiveHint"), tool.destructive);
+        }
+        entry.insert(QStringLiteral("annotations"), annotations);
         list.append(entry);
     }
     return list;

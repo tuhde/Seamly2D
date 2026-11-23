@@ -59,10 +59,35 @@ Any MCP client that can talk to a local HTTP server with a bearer token can use 
   machine, but that has not been tested): use the
   `claude mcp add --transport http seamly2d http://127.0.0.1:47800/mcp --header "Authorization: Bearer <token>"` line
   from the dialog, or the `.mcp.json` snippet.
-- **Claude Desktop:** configure the same URL and header the way your version of Claude Desktop supports it for local
-  servers. Depending on the version a small local bridge may be needed; check the Claude Desktop documentation.
+- **Claude Desktop:** see the next section.
 
-The token changes on every start of Seamly2D, so update the client's configuration after restarting the program.
+The token is saved, so the client's configuration stays valid across restarts; only **New token** invalidates it.
+
+### Claude Desktop
+
+Claude Desktop starts local programs and talks to them over stdin/stdout, so it needs a small bridge to the HTTP
+endpoint. The repository contains one (`dist/claude-desktop/`, plain Node.js without dependencies) and a script that
+packs it as an extension bundle:
+
+1. Run `scripts/build-mcpb.sh`. It writes `build/seamly2d.mcpb`.
+2. Turn the connection on in **View > MCP Config and Log** in Seamly2D.
+3. Drag `seamly2d.mcpb` into the Claude Desktop window (or open **Settings > Extensions** and install it there).
+   Enter the **port** (47800 unless the panel shows another one) and the **token** from the panel. Claude Desktop keeps
+   the token in the system keychain.
+4. Seamly2D has to be running when you use the tools. If it is not, or the token is wrong, Claude gets an error that
+   says so. After **New token**, enter the new one in the extension's settings.
+
+Without the bundle you can also add the bridge by hand to `claude_desktop_config.json` (for example with
+`npx mcp-remote http://127.0.0.1:47800/mcp --allow-http --header "Authorization:Bearer <token>"`); the bundle is easier
+and keeps the token out of that file.
+
+**Permissions.** Claude Desktop asks before each tool call until you tell it otherwise, and the server cannot change
+that. Open the extension's tool permissions (in Settings > Extensions > Seamly2D, depending on the version; connectors added by hand are under
+Connectors) and choose **Always allow** for the read-only tools and for the tools that only edit the pattern. Leave
+**Needs approval** on the tools that delete or replace something. The server reports this to the client with
+annotations: every tool says whether it is read-only and that it only touches the local application; editing tools say
+they are not destructive, while `delete_object`, `delete_variable`, `delete_piece`, `save_pattern`, `open_pattern` and
+`export_layout` are marked destructive. Edits can be undone with Undo in Seamly2D or by asking Claude to undo.
 
 ## What Claude can do
 
