@@ -4634,8 +4634,10 @@ McpTool PatternEditor::addCurveTool()
                        "Types:\n"
                        "- spline: a smooth curve from 'start_point_id' to 'end_point_id'. 'angle1' is the "
                        "direction in degrees in which the curve leaves the start point and 'angle2' the direction "
-                       "in which it arrives at the end point (0 = right, 90 = up, 180 = left, 270 = down on the "
-                       "screen); 'length1' and 'length2' (pattern unit, formulas allowed) are the lengths of the "
+                       "from the end point towards its control handle, i.e. the direction of travel on arrival "
+                       "turned by 180 degrees (a curve that arrives heading right has angle2 = 180). Same as in "
+                       "Seamly2D's own dialog. Angles: 0 = right, 90 = up, 180 = left, 270 = down on the "
+                       "screen. 'length1' and 'length2' (pattern unit, formulas allowed) are the lengths of the "
                        "control handles at start and end: longer handles make a rounder curve.\n"
                        "- cubicBezier: a Bezier curve through 'start_point_id' and 'end_point_id' that is pulled "
                        "towards the control points 'control1_point_id' (at the start) and 'control2_point_id' (at "
@@ -4674,7 +4676,8 @@ McpTool PatternEditor::addCurveTool()
     properties.insert(QStringLiteral("angle1"),
                       stringProperty(QStringLiteral("spline: leaving direction at the start, degrees.")));
     properties.insert(QStringLiteral("angle2"),
-                      stringProperty(QStringLiteral("spline: arriving direction at the end, degrees.")));
+                      stringProperty(QStringLiteral("spline: direction from the end point towards its control handle, degrees "
+                                                      "(= arrival direction + 180).")));
     properties.insert(QStringLiteral("length1"),
                       stringProperty(QStringLiteral("spline: handle length at the start (number or formula).")));
     properties.insert(QStringLiteral("length2"),
