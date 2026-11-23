@@ -3928,8 +3928,9 @@ McpTool PatternEditor::setLabelTool()
         QStringLiteral("Shows, hides or resizes a label on a piece. 'label' is \"piece\" (default: name, letter, "
                        "quantity) or \"pattern\" (information about the pattern). Optional: visible, width and "
                        "height (pattern unit; a formula is evaluated once), font_size (points), angle (degrees) and x/y (the label's center, measured from the top left corner of the piece, y down). A label that "
-                       "is switched on without size or position gets a small default size in the middle of the "
-                       "piece. One Undo step.");
+                       "is switched on without size or position gets a small default size (a 60 x 30 mm box with the "
+                       "standard font) in the middle of the piece, which is hard to read on a large piece: set "
+                       "font_size (for example 12 to 24) and width/height to match. One Undo step.");
     tool.inputSchema = QJsonObject{
         {QStringLiteral("type"), QStringLiteral("object")},
         {QStringLiteral("properties"),
@@ -4488,6 +4489,48 @@ McpToolResult PatternEditor::addDraftBlock(const QJsonObject &arguments)
                                       result.value(QStringLiteral("unit")).toString(),
                                       basePoint.value(QStringLiteral("name")).toString())
                                  .arg(basePoint.value(QStringLiteral("id")).toInt()),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::renameDraftBlock(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    QString error;
+    const QJsonObject result = window->mcpRenameDraftBlock(stringArg(arguments, "name"),
+                                                           stringArg(arguments, "new_name"), error);
+    if (!error.isEmpty())
+    {
+        return McpToolResult::error(error);
+    }
+    return McpToolResult::ok(QStringLiteral("Renamed draft block \"%1\" to \"%2\". Undo restores the old name.")
+                                 .arg(result.value(QStringLiteral("oldName")).toString(),
+                                      result.value(QStringLiteral("draftBlock")).toString()),
+                             result);
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpToolResult PatternEditor::deleteDraftBlock(const QJsonObject &arguments)
+{
+    MainWindow *window = qobject_cast<MainWindow *>(qApp->getMainWindow());
+    if (window == nullptr)
+    {
+        return McpToolResult::error(QStringLiteral("The Seamly2D main window is not available."));
+    }
+    QString error;
+    const QJsonObject result = window->mcpDeleteDraftBlock(stringArg(arguments, "name"), error);
+    if (!error.isEmpty())
+    {
+        return McpToolResult::error(error);
+    }
+    return McpToolResult::ok(QStringLiteral("Deleted draft block \"%1\" with all its objects. The active draft block "
+                                            "is now \"%2\". Undo restores it.")
+                                 .arg(result.value(QStringLiteral("deleted")).toString(),
+                                      result.value(QStringLiteral("activeDraftBlock")).toString()),
                              result);
 }
 
@@ -5241,6 +5284,46 @@ McpTool PatternEditor::addDraftBlockTool()
     tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                                    {QStringLiteral("properties"), properties}};
     tool.handler = [](const QJsonObject &arguments) { return PatternEditor::addDraftBlock(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::renameDraftBlockTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("rename_draft_block");
+    tool.description =
+        QStringLiteral("Renames a draft block. The names of the blocks are in get_pattern_info. The block that is "
+                       "active stays active. One Undo step.");
+    QJsonObject properties;
+    properties.insert(QStringLiteral("name"), stringProperty(QStringLiteral("Current name of the draft block.")));
+    properties.insert(QStringLiteral("new_name"),
+                      stringProperty(QStringLiteral("New name; must not be used by another draft block.")));
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("name"),
+                                                                           QStringLiteral("new_name")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::renameDraftBlock(arguments); };
+    return tool;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+McpTool PatternEditor::deleteDraftBlockTool()
+{
+    McpTool tool;
+    tool.name = QStringLiteral("delete_draft_block");
+    tool.destructive = true;
+    tool.description =
+        QStringLiteral("Deletes a draft block with its base point and everything drawn in it. Refused for the only "
+                       "remaining block (rename it instead) and while a piece still uses points of the block (delete "
+                       "the piece first). Afterwards another block is active; the result says which. One Undo step "
+                       "restores the block.");
+    QJsonObject properties;
+    properties.insert(QStringLiteral("name"), stringProperty(QStringLiteral("Name of the draft block to delete.")));
+    tool.inputSchema = QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                   {QStringLiteral("properties"), properties},
+                                   {QStringLiteral("required"), QJsonArray{QStringLiteral("name")}}};
+    tool.handler = [](const QJsonObject &arguments) { return PatternEditor::deleteDraftBlock(arguments); };
     return tool;
 }
 

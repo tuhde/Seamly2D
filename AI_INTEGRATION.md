@@ -85,10 +85,10 @@ and keeps the token out of that file.
 that. Answering "Always allow" in the question only covers that one tool. To set a whole group at once, click **+ >
 Plugins > Manage Plugins** in the chat, open **seamly2d**, and choose a permission for each of the two groups
 (read-only tools and write/delete tools). Allow both groups if you want Claude to work without
-interruption; to keep a confirmation for `delete_object`, `delete_variable`, `delete_piece`, `save_pattern`,
+interruption; to keep a confirmation for `delete_object`, `delete_draft_block`, `delete_variable`, `delete_piece`, `save_pattern`,
 `open_pattern` and `export_layout`, set those individually. (The menu may differ between versions.) The server reports this to the client with
 annotations: every tool says whether it is read-only and that it only touches the local application; editing tools say
-they are not destructive, while the six tools named above are marked destructive. Edits can be undone with Undo in Seamly2D or by asking Claude to undo.
+they are not destructive, while the seven tools named above are marked destructive. Edits can be undone with Undo in Seamly2D or by asking Claude to undo.
 
 ## What Claude can do
 
@@ -97,7 +97,7 @@ Claude learns the tools from the server itself (names, parameters, units, conven
 | Area | Tools |
 |---|---|
 | Look | `get_pattern_info`, `list_objects` (filters: element, type, name, ids), `list_variables`, `list_pieces`, `screenshot` (drawing or window), `show_mode`, `fit_view` (everything, the active draft block, or one piece) |
-| Draw | `add_draft_block` (also sets the unit), `add_point` (endLine, alongLine, normal, bisector, lineIntersect, height, lineIntersectAxis, curveIntersectAxis, cutCurve, shoulder, triangle, intersectXY, intersectCircles, intersectCircleLine, tangentToCircle, intersectArcs, tangentToArc, intersectCurves), `add_line`, `add_curve` (spline, cubicBezier, path through three or more points), `add_arc`, `add_elliptical_arc` |
+| Draw | `add_draft_block` (also sets the unit), `rename_draft_block`, `add_point` (endLine, alongLine, normal, bisector, lineIntersect, height, lineIntersectAxis, curveIntersectAxis, cutCurve, shoulder, triangle, intersectXY, intersectCircles, intersectCircleLine, tangentToCircle, intersectArcs, tangentToArc, intersectCurves), `add_line`, `add_curve` (spline, cubicBezier, path through three or more points), `add_arc`, `add_elliptical_arc` |
 | Change | `update_object` (name, formulas, circle/arc/curve intersection points, referenced points and curves, cut direction, position of the base point), `delete_object`, `set_variable`, `delete_variable`, `set_measurement` (a value in the measurement file), `create_measurements`, `attach_measurements`, `undo`, `redo` |
 | Pieces | `add_piece` (outline from point and curve ids, optional seam allowance), `update_piece` (quantity, fold, label letter and annotation, seam allowance, name), `set_grainline`, `set_notch`, `add_anchor_point`, `add_internal_path`, `set_label`, `set_size`, `set_corner` (types, count, size; also removes), `delete_piece` |
 | Files | `save_pattern`, `open_pattern`, `export_layout` (pdf, svg, png, jpg, tif, eps, ps, dxf; arranged on pages or one file per piece) |

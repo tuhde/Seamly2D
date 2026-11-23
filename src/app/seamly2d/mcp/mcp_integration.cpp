@@ -443,6 +443,8 @@ void McpIntegration::registerTools()
     info.handler = [this](const QJsonObject &arguments) { return getPatternInfo(arguments); };
     m_registry.registerTool(info);
     m_registry.registerTool(PatternEditor::addDraftBlockTool());
+    m_registry.registerTool(PatternEditor::renameDraftBlockTool());
+    m_registry.registerTool(PatternEditor::deleteDraftBlockTool());
     m_registry.registerTool(PatternEditor::listObjectsTool());
     m_registry.registerTool(PatternEditor::addPointTool());
     m_registry.registerTool(PatternEditor::addLineTool());

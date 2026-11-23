@@ -6935,6 +6935,195 @@ QJsonObject MainWindow::mcpAddDraftBlock(const QString &name, const QString &uni
     return result;
 }
 
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpRenameDraftBlock(const QString &name, const QString &newName, QString &error)
+{
+    const QString wanted = newName.trimmed();
+    if (wanted.isEmpty())
+    {
+        error = QStringLiteral("'new_name' is required.");
+        return QJsonObject();
+    }
+    const int index = draft_block_combobox->findText(name);
+    if (index == -1)
+    {
+        QStringList names;
+        for (int i = 0; i < draft_block_combobox->count(); ++i)
+        {
+            names << draft_block_combobox->itemText(i);
+        }
+        error = QStringLiteral("There is no draft block named \"%1\". Existing blocks: %2.")
+                    .arg(name, names.isEmpty() ? QStringLiteral("none") : names.join(QStringLiteral(", ")));
+        return QJsonObject();
+    }
+    if (wanted == name)
+    {
+        error = QStringLiteral("The draft block is already named \"%1\".").arg(name);
+        return QJsonObject();
+    }
+    if (draft_block_combobox->findText(wanted) != -1)
+    {
+        error = QStringLiteral("A draft block named \"%1\" already exists.").arg(wanted);
+        return QJsonObject();
+    }
+
+    // RenameDraftBlock renames the active block, so make the wanted one active for the moment.
+    const QString previous = doc->getActiveDraftBlockName();
+    if (previous != name)
+    {
+        draft_block_combobox->setCurrentIndex(index);
+    }
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(tr("Claude: rename draft block %1").arg(name));
+    stack->push(new RenameDraftBlock(doc, wanted, draft_block_combobox));
+    fullParseFile();
+    stack->endMacro();
+    if (previous != name)
+    {
+        const int back = draft_block_combobox->findText(previous);
+        if (back != -1)
+        {
+            draft_block_combobox->setCurrentIndex(back);
+        }
+    }
+
+    if (draft_block_combobox->findText(wanted) == -1)
+    {
+        error = QStringLiteral("The draft block \"%1\" could not be renamed.").arg(name);
+        return QJsonObject();
+    }
+    return QJsonObject{{QStringLiteral("draftBlock"), wanted},
+                       {QStringLiteral("oldName"), name},
+                       {QStringLiteral("activeDraftBlock"), doc->getActiveDraftBlockName()}};
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+QJsonObject MainWindow::mcpDeleteDraftBlock(const QString &name, QString &error)
+{
+    const int index = draft_block_combobox->findText(name);
+    if (index == -1)
+    {
+        QStringList names;
+        for (int i = 0; i < draft_block_combobox->count(); ++i)
+        {
+            names << draft_block_combobox->itemText(i);
+        }
+        error = QStringLiteral("There is no draft block named \"%1\". Existing blocks: %2.")
+                    .arg(name, names.isEmpty() ? QStringLiteral("none") : names.join(QStringLiteral(", ")));
+        return QJsonObject();
+    }
+    if (doc->draftBlockCount() <= 1)
+    {
+        error = QStringLiteral("\"%1\" is the only draft block and cannot be deleted. Rename it instead.").arg(name);
+        return QJsonObject();
+    }
+
+    // Objects of the block that a piece still uses: deleting them would leave the piece broken.
+    QSet<quint32> ids;
+    std::function<void(const QDomElement &)> collect = [&ids, &collect](const QDomElement &element)
+    {
+        bool ok = false;
+        const quint32 id = element.attribute(QStringLiteral("id")).toUInt(&ok);
+        if (ok)
+        {
+            ids.insert(id);
+        }
+        for (QDomElement child = element.firstChildElement(); !child.isNull(); child = child.nextSiblingElement())
+        {
+            collect(child);
+        }
+    };
+    collect(doc->getDraftBlockElement(name));
+    QStringList users;
+    const QHash<quint32, VPiece> *pieces = pattern->DataPieces();
+    for (auto it = pieces->constBegin(); it != pieces->constEnd(); ++it)
+    {
+        const QVector<VPieceNode> nodes = it.value().GetPath().getNodes();
+        for (const VPieceNode &node : nodes)
+        {
+            if (ids.contains(node.GetId()))
+            {
+                users << it.value().GetName();
+                break;
+            }
+        }
+    }
+    if (!users.isEmpty())
+    {
+        error = QStringLiteral("Draft block \"%1\" is still used by the pieces: %2. Delete those pieces first.")
+                    .arg(name, users.join(QStringLiteral(", ")));
+        return QJsonObject();
+    }
+
+    // Objects of other draft blocks that refer to this block's objects (same attribute rule as delete_object): the
+    // pattern could not be parsed any more without them.
+    static const QRegularExpression referenceAttribute(
+        QStringLiteral("point|line[12]|arc|curve|center|spline|path|object|axis"),
+        QRegularExpression::CaseInsensitiveOption);
+    QStringList dependents;
+    std::function<void(const QDomElement &)> findReferences = [&](const QDomElement &element)
+    {
+        const QDomNamedNodeMap attributes = element.attributes();
+        for (int i = 0; i < attributes.count(); ++i)
+        {
+            const QDomAttr attribute = attributes.item(i).toAttr();
+            bool ok = false;
+            const quint32 value = attribute.value().toUInt(&ok);
+            if (ok && ids.contains(value) && attribute.name().contains(referenceAttribute)
+                && element.attribute(QStringLiteral("id")).toUInt() != value)
+            {
+                const QString label = element.attribute(QStringLiteral("name"));
+                dependents << QStringLiteral("%1 (id %2)")
+                                  .arg(label.isEmpty() ? element.tagName() : label, element.attribute(QStringLiteral("id")));
+                break;
+            }
+        }
+        for (QDomElement child = element.firstChildElement(); !child.isNull(); child = child.nextSiblingElement())
+        {
+            findReferences(child);
+        }
+    };
+    const QDomNodeList blocks = doc->documentElement().elementsByTagName(VAbstractPattern::TagDraftBlock);
+    for (int i = 0; i < blocks.count(); ++i)
+    {
+        const QDomElement block = blocks.at(i).toElement();
+        if (block.attribute(QStringLiteral("name")) != name)
+        {
+            findReferences(block);
+        }
+    }
+    if (!dependents.isEmpty())
+    {
+        error = QStringLiteral("Objects of draft block \"%1\" are used by other draft blocks: %2. Delete or change "
+                               "those first.").arg(name, dependents.join(QStringLiteral(", ")));
+        return QJsonObject();
+    }
+
+    // DeleteDraftBlock removes the active block, like Draft > Delete: make the wanted one active, then delete it
+    // without the confirmation dialog.
+    if (doc->getActiveDraftBlockName() != name)
+    {
+        draft_block_combobox->setCurrentIndex(index);
+    }
+    qApp->getSceneView()->itemClicked(nullptr);
+    QUndoStack *stack = qApp->getUndoStack();
+    stack->beginMacro(tr("Claude: delete draft block %1").arg(name));
+    DeleteDraftBlock *command = new DeleteDraftBlock(doc, name);
+    connect(command, &DeleteDraftBlock::NeedFullParsing, doc, &VAbstractPattern::NeedFullParsing);
+    connect(command, &DeleteDraftBlock::NeedFullParsing, this, [this](){setWidgetsEnabled(true);});
+    stack->push(command);
+    stack->endMacro();
+    setWidgetsEnabled(true);
+
+    if (draft_block_combobox->findText(name) != -1)
+    {
+        error = QStringLiteral("The draft block \"%1\" could not be deleted.").arg(name);
+        return QJsonObject();
+    }
+    return QJsonObject{{QStringLiteral("deleted"), name},
+                       {QStringLiteral("activeDraftBlock"), doc->getActiveDraftBlockName()}};
+}
+
 namespace
 {
 /// Files the user already allowed Claude to write to / open in this session.

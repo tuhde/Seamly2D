@@ -115,9 +115,17 @@ public:
     /// Tool `add_draft_block`: creates a draft block with its base point (for the first block also sets the unit).
     static McpToolResult addDraftBlock(const QJsonObject &arguments);
 
+    /// Tool `rename_draft_block`: gives a draft block a new name.
+    static McpToolResult renameDraftBlock(const QJsonObject &arguments);
+
+    /// Tool `delete_draft_block`: removes a draft block with all its objects.
+    static McpToolResult deleteDraftBlock(const QJsonObject &arguments);
+
     static McpTool listObjectsTool();
     static McpTool addPointTool();
     static McpTool addDraftBlockTool();
+    static McpTool renameDraftBlockTool();
+    static McpTool deleteDraftBlockTool();
     static McpTool setMeasurementTool();
     static McpTool listStandardMeasurementsTool();
     static McpTool createMeasurementsTool();

@@ -119,6 +119,14 @@ public:
     /// on failure. GUI thread only.
     QJsonObject mcpAddDraftBlock(const QString &name, const QString &unit, QString &error);
 
+    /// Renames a draft block for the MCP tool `rename_draft_block`, like Draft > Rename but without a dialog. The
+    /// active block stays active. Returns an empty object and sets `error` on failure. GUI thread only.
+    QJsonObject mcpRenameDraftBlock(const QString &name, const QString &newName, QString &error);
+
+    /// Deletes a draft block with all its objects for the MCP tool `delete_draft_block`, without the confirmation
+    /// dialog. Refused for the last block and for blocks whose objects a piece still uses. GUI thread only.
+    QJsonObject mcpDeleteDraftBlock(const QString &name, QString &error);
+
     /// Saves the pattern for the MCP tool `save_pattern`. Without `path` the current file is used. The first time Claude
     /// writes to a file in a session the user is asked to confirm. Never shows other dialogs. GUI thread only.
     QJsonObject mcpSavePattern(const QString &path, QString &error);
