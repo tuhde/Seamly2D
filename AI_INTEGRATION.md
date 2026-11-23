@@ -82,12 +82,13 @@ Without the bundle you can also add the bridge by hand to `claude_desktop_config
 and keeps the token out of that file.
 
 **Permissions.** Claude Desktop asks before each tool call until you tell it otherwise, and the server cannot change
-that. Open the extension's tool permissions (in Settings > Extensions > Seamly2D, depending on the version; connectors added by hand are under
-Connectors) and choose **Always allow** for the read-only tools and for the tools that only edit the pattern. Leave
-**Needs approval** on the tools that delete or replace something. The server reports this to the client with
+that. Answering "Always allow" in the question only covers that one tool. To set a whole group at once, click **+ >
+Plugins > Manage Plugins** in the chat, open **seamly2d**, and choose a permission for each of the two groups
+(read-only tools and write/delete tools). Allow both groups if you want Claude to work without
+interruption; to keep a confirmation for `delete_object`, `delete_variable`, `delete_piece`, `save_pattern`,
+`open_pattern` and `export_layout`, set those individually. (The menu may differ between versions.) The server reports this to the client with
 annotations: every tool says whether it is read-only and that it only touches the local application; editing tools say
-they are not destructive, while `delete_object`, `delete_variable`, `delete_piece`, `save_pattern`, `open_pattern` and
-`export_layout` are marked destructive. Edits can be undone with Undo in Seamly2D or by asking Claude to undo.
+they are not destructive, while the six tools named above are marked destructive. Edits can be undone with Undo in Seamly2D or by asking Claude to undo.
 
 ## What Claude can do
 
